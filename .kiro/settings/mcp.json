@@ -1,0 +1,63 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--port",
+        "666"
+      ],
+      "disabled": true,
+      "autoApprove": [
+        "*",
+        "evaluate_script",
+        "navigate_page",
+        "click",
+        "list_console_messages",
+        "list_console_messages",
+        "wait_for",
+        "list_pages",
+        "take_screenshot",
+        "resize_page",
+        "take_snapshot",
+        "emulate",
+        "new_page",
+        "press_key",
+        "select_page",
+        "fill",
+        "list_network_requests",
+        "close_page",
+        "get_console_message",
+        "upload_file",
+        "handle_dialog",
+        "hover",
+        "get_network_request"
+      ]
+    },
+    "magicui": {
+      "command": "uvx",
+      "args": [
+        "magicui-mcp-server"
+      ],
+      "disabled": true,
+      "autoApprove": []
+    },
+    "tailwindcss": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "tailwindcss-mcp-server@latest"
+      ],
+      "disabled": true,
+      "autoApprove": [
+        "get_tailwind_utilities",
+        "get_tailwind_utilities",
+        "convert_css_to_tailwind",
+        "search_tailwind_docs",
+        "generate_component_template",
+        "get_tailwind_colors"
+      ]
+    }
+  }
+}

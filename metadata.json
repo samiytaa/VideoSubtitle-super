@@ -1,0 +1,7 @@
+{
+  "name": "Video Subtitle Extractor & Audio Converter",
+  "description": "A professional tool for extracting subtitle regions from videos, smart SRT-based frame capturing, image stitching, and video-to-MP3 conversion.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
