@@ -1,24 +1,10 @@
-import {
-  CheckCircle2,
-  Crop,
-  History,
-  Image as ImageIcon,
-  LayoutGrid,
-  Loader,
-  Video,
-  FileCheck
-} from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import AppHeader, { AppTab } from './components/app/AppHeader';
+import { BaimiaoTab, ExtractTab, GalleryTab, ProofreadEditorTab, ProofreadTab } from './components/app/AppTabs';
+import AiChatTab from './components/AiChatTab';
+import LoadingOverlay from './components/app/LoadingOverlay';
 import { NotificationProvider, useNotifier } from './components/Notifications';
-import QuickProcessPanel from './components/QuickProcessPanel';
 import ProcessingView from './components/ProcessingView';
-import ResultGallery from './components/ResultGallery';
-import CompactGallery from './components/CompactGallery';
-import ResizablePanel from './components/ResizablePanel';
-import RoiSelector from './components/RoiSelector';
-
-import TextProofreader from './components/FormatConverter';
-import TextProofreader2 from './components/TextProofreader2';
 import { ExtractedFrame, ExtractionMode, ExtractionParams, MergedImage, ROI, RoiPreset, VideoFile } from './types';
 import { batchMergeImages } from './utils/imageUtils';
 import {
@@ -28,85 +14,28 @@ import {
   saveMergedImages
 } from './utils/storageUtils';
 
-type Tab = 'extract' | 'gallery' | 'proofread' | 'proofread2';
+type Tab = AppTab;
 
-// 左侧面板组件（可收起的截取结果）
-const LeftPanel: React.FC<{
-  frames: ExtractedFrame[];
-  mergedImages: MergedImage[];
-  onMerge: (selectedFrames: ExtractedFrame[], batchSize: number) => void;
-  onOneClickRecognize?: () => void;
-  onDelete?: (ids: string[]) => void;
-  onDeleteMerged?: (ids: string[]) => void;
-  onClearMerged?: () => void;
-  onClearAll?: () => void;
-  onImportFrames?: (frames: ExtractedFrame[]) => void;
-  onImportMerged?: (images: MergedImage[]) => void;
-  onMergeGroups?: (sourceGroup: 'group1' | 'group2', targetGroup: 'group1' | 'group2') => void;
-  onJumpToTime?: (timestamp: string) => void;
-}> = (props) => {
-  const [isCollapsed, setIsCollapsed] = React.useState(false);
-
-  return (
-    <div 
-      className={`bg-white rounded-2xl shadow-sm border border-gray-100 transition-all duration-300 min-h-[600px] ${
-        isCollapsed ? 'w-12' : 'w-[480px]'
-      }`}
-    >
-      {isCollapsed ? (
-        // 收起状态：只显示展开按钮
-        <div className="h-full flex flex-col items-center justify-start pt-6">
-          <button
-            onClick={() => setIsCollapsed(false)}
-            className="p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg"
-            title="展开截取结果"
-          >
-            <LayoutGrid className="w-5 h-5" />
-          </button>
-          <div className="mt-4 [writing-mode:vertical-rl] text-sm font-medium text-gray-500">
-            截取结果
-          </div>
-        </div>
-      ) : (
-        // 展开状态：显示完整内容
-        <div className="h-full flex flex-col">
-          {/* 标题栏 */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-200">
-            <div className="flex items-center gap-2">
-              <LayoutGrid className="w-5 h-5 text-indigo-600" />
-              <h3 className="font-bold text-gray-800">截取结果</h3>
-            </div>
-            <button
-              onClick={() => setIsCollapsed(true)}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-all"
-              title="收起面板"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-              </svg>
-            </button>
-          </div>
-          
-          {/* 内容区域 */}
-          <div className="flex-1 overflow-auto p-4">
-            <ResultGallery {...props} />
-          </div>
-        </div>
-      )}
-    </div>
-  );
+const TAB_TO_PATH: Record<Tab, string> = {
+  extract: '/',
+  gallery: '/img',
+  proofread: '/convert',
+  proofread2: '/proofread',
+  baimiao: '/baimiao-ocr',
+  aichat: '/ai-chat',
 };
 
-// Placeholder Component for Inactive Sections
-const SectionPlaceholder: React.FC<{ icon: any, title: string, message: string }> = ({ icon: Icon, title, message }) => (
-  <div className="bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 p-12 text-center flex flex-col items-center justify-center h-full min-h-[300px] text-gray-400 transition-all">
-    <div className="bg-white p-4 rounded-full mb-4 shadow-sm">
-      <Icon className="w-8 h-8 text-gray-300" />
-    </div>
-    <h3 className="text-lg font-bold text-gray-500 mb-1">{title}</h3>
-    <p className="text-sm">{message}</p>
-  </div>
-);
+const PATH_TO_TAB: Record<string, Tab> = Object.entries(TAB_TO_PATH).reduce((acc, [tab, path]) => {
+  acc[path] = tab as Tab;
+  return acc;
+}, {} as Record<string, Tab>);
+PATH_TO_TAB['/ocr'] = 'aichat';
+
+const getTabFromLocation = (): Tab => {
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+  return PATH_TO_TAB[pathname] ?? 'extract';
+};
+
 
 const App: React.FC = () => {
   return (
@@ -119,6 +48,26 @@ const App: React.FC = () => {
 const AppContent: React.FC = () => {
   const notifier = useNotifier();
   const [activeTab, setActiveTab] = useState<Tab>('extract');
+
+  useEffect(() => {
+    setActiveTab(getTabFromLocation());
+
+    const handlePopState = () => {
+      const nextTab = getTabFromLocation();
+      setActiveTab((currentTab) => (currentTab === nextTab ? currentTab : nextTab));
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    const targetPath = TAB_TO_PATH[activeTab];
+    const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+    if (currentPath !== targetPath) {
+      window.history.pushState(null, '', targetPath);
+    }
+  }, [activeTab]);
 
   // State
   const [activeVideo, setActiveVideo] = useState<VideoFile | null>(null);
@@ -722,6 +671,20 @@ const AppContent: React.FC = () => {
   const handleOneClickRecognize = useCallback(async () => {
     if (extractedFrames.length === 0) return;
 
+    if (mergedImages.length > 0) {
+      const choice = await notifier.showChoice({
+        title: '已存在拼接图片',
+        message: `当前已有 ${mergedImages.length} 张拼接图片，请选择操作方式。`,
+        buttons: [
+          { label: '移除后拼接', value: 'remove', variant: 'danger' },
+          { label: '不移除继续拼接', value: 'keep', variant: 'primary' },
+          { label: '取消拼接', value: 'cancel', variant: 'default' },
+        ]
+      });
+      if (choice === 'cancel') return;
+      if (choice === 'remove') setMergedImages([]);
+    }
+
     const mergedFrames = extractedFrames.map((frame) =>
       frame.group === 'group2'
         ? { ...frame, group: 'group1' as const }
@@ -735,7 +698,7 @@ const AppContent: React.FC = () => {
 
     setMergedImages(prev => [...prev, ...newMergedImages]);
     notifier.addToast('已完成一键识别：先合并分组，再按默认参数完成图片拼接', 'success');
-  }, [extractedFrames, mergeFramesToImages, notifier]);
+  }, [extractedFrames, mergedImages.length, mergeFramesToImages, notifier]);
 
   const handleClearAllData = useCallback(async () => {
     const totalCount = extractedFrames.length + mergedImages.length;
@@ -754,151 +717,86 @@ const AppContent: React.FC = () => {
     }
   }, [extractedFrames.length, mergedImages.length, notifier]);
 
+  const handleReplaceVideo = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/*';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const getVideoMetadata = (sourceFile: File): Promise<VideoFile> => {
+        return new Promise((resolve, reject) => {
+          const url = URL.createObjectURL(sourceFile);
+          const video = document.createElement('video');
+          video.preload = 'auto';
+          video.muted = true;
+          const onLoadedData = () => {
+            if (!isFinite(video.duration) || video.duration === 0) return;
+            cleanup();
+            resolve({ id: Math.random().toString(36).substr(2, 9), file: sourceFile, name: sourceFile.name, size: sourceFile.size, duration: video.duration, width: video.videoWidth, height: video.videoHeight, previewUrl: url });
+          };
+          const onDurationChange = () => {
+            if (isFinite(video.duration) && video.duration > 0) {
+              cleanup();
+              resolve({ id: Math.random().toString(36).substr(2, 9), file: sourceFile, name: sourceFile.name, size: sourceFile.size, duration: video.duration, width: video.videoWidth, height: video.videoHeight, previewUrl: url });
+            }
+          };
+          const onError = () => {
+            cleanup();
+            reject(new Error(`Failed to load video metadata for ${sourceFile.name}`));
+            URL.revokeObjectURL(url);
+          };
+          const cleanup = () => {
+            video.removeEventListener('loadeddata', onLoadedData);
+            video.removeEventListener('durationchange', onDurationChange);
+            video.removeEventListener('error', onError);
+          };
+          video.addEventListener('loadeddata', onLoadedData);
+          video.addEventListener('durationchange', onDurationChange);
+          video.addEventListener('error', onError);
+          video.src = url;
+          video.load();
+        });
+      };
+
+      try {
+        const videoData = await getVideoMetadata(file);
+        handleVideoUploaded(videoData);
+      } catch (error) {
+        console.error('Error processing video:', error);
+        notifier.addToast('无法读取视频文件，请确保文件格式正确。', 'error');
+      }
+    };
+    input.click();
+  }, [handleVideoUploaded, notifier]);
+
   return (
     <>
-      {!isDataLoaded && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/90 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
-            <Loader className="w-9 h-9 text-indigo-600 animate-spin" />
-            <div className="text-center">
-              <h3 className="text-sm font-semibold text-gray-900 mb-0.5">正在加载数据</h3>
-              <p className="text-xs text-gray-400">从本地存储恢复图片...</p>
-            </div>
-          </div>
-        </div>
-      )}
+      <LoadingOverlay visible={!isDataLoaded} />
 
       <div className="min-h-screen flex flex-col bg-slate-50">
-        <header className="bg-white border-b border-gray-200/60 sticky top-0 z-50 shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between h-10 items-center">
-              <div className="flex items-center gap-2">
-                <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 p-1.5 rounded-md shadow-sm">
-                  <Video className="text-white w-4 h-4" />
-                </div>
-                <h1 className="text-lg font-semibold text-gray-900 hidden sm:block">视频字幕截取工具</h1>
-              </div>
+        <AppHeader activeTab={activeTab} isProcessing={isProcessing} onChangeTab={setActiveTab} />
 
-              <nav className="flex space-x-1">
-                <button
-                  onClick={() => !isProcessing && setActiveTab('extract')}
-                  disabled={isProcessing && activeTab !== 'extract'}
-                  title={isProcessing && activeTab !== 'extract' ? '处理中，请等待完成后再切换' : undefined}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'extract' ? 'bg-indigo-50 text-indigo-700' : isProcessing ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
-                >
-                  <span className="flex items-center gap-1.5"><ImageIcon className="w-4 h-4" /> 字幕截取</span>
-                </button>
-                <button
-                  onClick={() => !isProcessing && setActiveTab('gallery')}
-                  disabled={isProcessing}
-                  title={isProcessing ? '处理中，请等待完成后再切换' : undefined}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'gallery' ? 'bg-indigo-50 text-indigo-700' : isProcessing ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
-                >
-                  <span className="flex items-center gap-1.5"><LayoutGrid className="w-4 h-4" /> 查看图片</span>
-                </button>
-
-                <button
-                  onClick={() => !isProcessing && setActiveTab('proofread')}
-                  disabled={isProcessing}
-                  title={isProcessing ? '处理中，请等待完成后再切换' : undefined}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'proofread' ? 'bg-indigo-50 text-indigo-700' : isProcessing ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
-                >
-                  <span className="flex items-center gap-1.5"><FileCheck className="w-4 h-4" /> 文本转换</span>
-                </button>
-                <button
-                  onClick={() => !isProcessing && setActiveTab('proofread2')}
-                  disabled={isProcessing}
-                  title={isProcessing ? '处理中，请等待完成后再切换' : undefined}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'proofread2' ? 'bg-indigo-50 text-indigo-700' : isProcessing ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
-                >
-                  <span className="flex items-center gap-1.5"><FileCheck className="w-4 h-4" /> 文本校对</span>
-                </button>
-              </nav>
-            </div>
-          </div>
-        </header>
-
-        <main className={`flex-grow w-full ${activeTab === 'proofread2' ? '' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6'}`}>
+        <main className={`grow w-full ${activeTab === 'proofread2' ? '' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6'}`}>
           {activeTab === 'extract' && (
-            <div className="pb-20">
-              {/* Upload & ROI Selection + 一键处理（合并为一个卡片） */}
-              <section ref={sectionUploadRef} className="scroll-mt-20">
-                <div ref={sectionRoiRef} className="bg-white rounded-xl shadow-sm border border-gray-200/60 overflow-hidden">
-                  <div>
-                  <RoiSelector
-                    video={activeVideo}
-                    videoSrc={videoSrc}
-                    onConfirm={handleRoiSet}
-                    onFrameCaptured={handleFrameCaptured}
-                    videoRef={videoElementRef}
-                    onQuickProcess={handleQuickProcess}
-                    isProcessing={isProcessing}
-                    progress={processingProgress}
-                    onUpload={handleVideoUploaded}
-                    onClearVideo={() => setActiveVideo(null)}
-                    onReplaceVideo={() => {
-                      const input = document.createElement('input');
-                      input.type = 'file';
-                      input.accept = 'video/*';
-                      input.onchange = async (e) => {
-                        const file = (e.target as HTMLInputElement).files?.[0];
-                        if (file) {
-                          const getVideoMetadata = (file: File): Promise<VideoFile> => {
-                            return new Promise((resolve, reject) => {
-                              const url = URL.createObjectURL(file);
-                              const video = document.createElement('video');
-                              video.preload = 'auto';
-                              video.muted = true;
-                              const onLoadedData = () => {
-                                if (!isFinite(video.duration) || video.duration === 0) return;
-                                cleanup();
-                                resolve({ id: Math.random().toString(36).substr(2, 9), file, name: file.name, size: file.size, duration: video.duration, width: video.videoWidth, height: video.videoHeight, previewUrl: url });
-                              };
-                              const onDurationChange = () => {
-                                if (isFinite(video.duration) && video.duration > 0) {
-                                  cleanup();
-                                  resolve({ id: Math.random().toString(36).substr(2, 9), file, name: file.name, size: file.size, duration: video.duration, width: video.videoWidth, height: video.videoHeight, previewUrl: url });
-                                }
-                              };
-                              const onError = () => { cleanup(); reject(new Error(`Failed to load video metadata for ${file.name}`)); URL.revokeObjectURL(url); };
-                              const cleanup = () => { video.removeEventListener('loadeddata', onLoadedData); video.removeEventListener('durationchange', onDurationChange); video.removeEventListener('error', onError); };
-                              video.addEventListener('loadeddata', onLoadedData);
-                              video.addEventListener('durationchange', onDurationChange);
-                              video.addEventListener('error', onError);
-                              video.src = url;
-                              video.load();
-                            });
-                          };
-                          try {
-                            const videoData = await getVideoMetadata(file);
-                            handleVideoUploaded(videoData);
-                          } catch (error) {
-                            console.error('Error processing video:', error);
-                            notifier.addToast('无法读取视频文件，请确保文件格式正确。', 'error');
-                          }
-                        }
-                      };
-                      input.click();
-                    }}
-                  />
-                  </div>
-                  {/* 一键处理 */}
-                  <div>
-                    <QuickProcessPanel
-                      video={activeVideo}
-                      timeRange={{ startTime: params.startTime, endTime: params.endTime }}
-                      isProcessing={isProcessing}
-                      progress={processingProgress}
-                      onConfirm={(file, dialoguePreset, locationPreset, timeRange, captureType, autoDeduplicationDialogue, autoDeduplicationLocation, frameInterval, skipSubtitleDialogue, skipSubtitleLocation) => {
-                        handleQuickProcess({ srtFile: file, dialoguePreset, locationPreset, timeRange, captureType, autoDeduplicationDialogue, autoDeduplicationLocation, frameInterval, skipSubtitleDialogue, skipSubtitleLocation });
-                      }}
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Hidden Processing View - 常驻组件，通过 taskId 触发新任务，避免重复加载视频/SRT */}
-              {activeVideo && (
+            <ExtractTab
+              sectionUploadRef={sectionUploadRef}
+              sectionRoiRef={sectionRoiRef}
+              activeVideo={activeVideo}
+              videoSrc={videoSrc}
+              isProcessing={isProcessing}
+              processingProgress={processingProgress}
+              paramsStartTime={params.startTime}
+              paramsEndTime={params.endTime}
+              videoElementRef={videoElementRef}
+              onRoiSet={handleRoiSet}
+              onFrameCaptured={handleFrameCaptured}
+              onQuickProcess={handleQuickProcess}
+              onUpload={handleVideoUploaded}
+              onClearVideo={() => setActiveVideo(null)}
+              onReplaceVideo={handleReplaceVideo}
+              processingView={activeVideo ? (
                 <div className="hidden">
                   <ProcessingView
                     video={activeVideo}
@@ -910,89 +808,55 @@ const AppContent: React.FC = () => {
                     onProgress={handleProcessingProgress}
                   />
                 </div>
-              )}
-            </div>
+              ) : null}
+            />
           )}
 
           {activeTab === 'gallery' && (
-            <div className="pb-20">
-              {/* 查看图片区域 */}
-              <section className="scroll-mt-20">
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200/60 p-6">
-                  <ResultGallery
-                    frames={extractedFrames}
-                    mergedImages={mergedImages}
-                    onMerge={handleMergeImages}
-                    onOneClickRecognize={handleOneClickRecognize}
-                    onDelete={handleDeleteFrames}
-                    onDeleteMerged={(ids) => setMergedImages(prev => prev.filter(img => !ids.includes(img.id)))}
-                    onClearMerged={() => setMergedImages([])}
-                    onClearAll={handleClearAllData}
-                    onImportFrames={handleImportFrames}
-                    onImportMerged={handleImportMerged}
-                    onMergeGroups={handleMergeGroups}
-                    onJumpToTime={handleJumpToTime}
-                  />
-                </div>
-              </section>
-            </div>
+            <GalleryTab
+              extractedFrames={extractedFrames}
+              mergedImages={mergedImages}
+              onMergeImages={handleMergeImages}
+              onOneClickRecognize={handleOneClickRecognize}
+              onDeleteFrames={handleDeleteFrames}
+              onDeleteMerged={(ids) => setMergedImages(prev => prev.filter(img => !ids.includes(img.id)))}
+              onClearMerged={() => setMergedImages([])}
+              onClearAllData={handleClearAllData}
+              onImportFrames={handleImportFrames}
+              onImportMerged={handleImportMerged}
+              onMergeGroups={handleMergeGroups}
+              onJumpToTime={handleJumpToTime}
+            />
           )}
 
-          {activeTab === 'proofread' && (
-            <div className="h-[calc(100vh-5rem)] flex flex-col">
-              <section className="flex-1 flex flex-col min-h-0">
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200/60 p-4 flex-1 flex flex-col min-h-0">
-                  <TextProofreader />
-                </div>
-              </section>
-            </div>
-          )}
+          {activeTab === 'proofread' && <ProofreadTab />}
 
           {activeTab === 'proofread2' && (
-            <div className="h-[calc(100vh-3.5rem)]">
-              <section className="h-full">
-                {/* 左右分栏布局 - 固定高度，各自滚动，无间距 */}
-                <div className="flex gap-0 h-full">
-                  {/* 左侧：截取图片展示（可调整大小、可折叠） */}
-                  <ResizablePanel
-                    defaultWidth="50%"
-                    minWidth={200}
-                    maxWidth={1200}
-                    collapsedWidth={48}
-                    defaultCollapsed={true}
-                  >
-                    <CompactGallery
-                      frames={extractedFrames}
-                      onDelete={handleDeleteFrames}
-                      onJumpToTime={handleJumpToTime}
-                      activeVideo={activeVideo}
-                      videoSrc={videoSrc}
-                      sharedVideoRef={videoElementRef}
-                      roi={roi}
-                      onCaptureFrame={handleFrameCaptured}
-                    />
-                  </ResizablePanel>
-                  
-                  {/* 右侧：文本校对 */}
-                  <div className="flex-1 bg-white overflow-hidden flex flex-col border-l border-gray-200">
-                    <div className="flex-1 overflow-hidden p-4">
-                      <TextProofreader2 
-                        extractedFrames={extractedFrames}
-                        onDeleteFrames={handleDeleteFrames}
-                        onJumpToTime={handleJumpToTime}
-                        activeVideo={activeVideo}
-                        videoSrc={videoSrc}
-                        sharedVideoRef={videoElementRef}
-                        roi={roi}
-                        onCaptureFrame={handleFrameCaptured}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </section>
-            </div>
+            <ProofreadEditorTab
+              extractedFrames={extractedFrames}
+              activeVideo={activeVideo}
+              videoSrc={videoSrc}
+              videoElementRef={videoElementRef}
+              roi={roi}
+              onDeleteFrames={handleDeleteFrames}
+              onJumpToTime={handleJumpToTime}
+              onCaptureFrame={handleFrameCaptured}
+            />
           )}
 
+          {activeTab === 'baimiao' && (
+            <BaimiaoTab
+              mergedImages={mergedImages}
+              onOneClickRecognize={handleOneClickRecognize}
+            />
+          )}
+
+          {activeTab === 'aichat' && (
+            <AiChatTab
+              mergedImages={mergedImages}
+              onOneClickRecognize={handleOneClickRecognize}
+            />
+          )}
         </main>
       </div>
     </>

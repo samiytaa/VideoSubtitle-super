@@ -39,7 +39,6 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
   onToggleRangeSelectMode,
   onClearSelection,
   onMergeSelected,
-  onOneClickRecognize,
   onBatchSizeChange,
   onRemoveDuplicates,
   onImportClick,
@@ -227,14 +226,6 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
                 >
                   <Scissors className="w-3.5 h-3.5" /> 拼接 ({selectedFramesCount})
                 </button>
-                <button
-                  onClick={onOneClickRecognize}
-                  disabled={filteredFrames.length === 0}
-                  className="flex items-center gap-1 px-2 py-1 text-xs text-white bg-violet-600 rounded hover:bg-violet-700 disabled:opacity-50 transition-colors"
-                  title="先合并分组，再按默认参数拼接所有图片"
-                >
-                  <Sparkles className="w-3.5 h-3.5" /> 一键识别
-                </button>
                 <input
                   type="number"
                   min="1"
@@ -251,7 +242,6 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
                 <div className="h-4 w-px bg-gray-300" />
               </>
             )}
-
             <button
               onClick={onImportClick}
               className="flex items-center gap-1 px-2 py-1 text-xs text-green-700 hover:bg-green-50 rounded transition-colors"
@@ -315,8 +305,8 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
               <span className="text-xs text-gray-500">每行</span>
               <select
                 value={itemsPerRow}
-                onChange={(e) => onItemsPerRowChange(Number(e.target.value) as any)}
-                className="px-1 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              onChange={(e) => onItemsPerRowChange(Number(e.target.value) as any)}
+              className="px-1 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 <option value={1}>1张</option>
                 <option value={3}>3张</option>
@@ -352,7 +342,7 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
             {Math.min(
               currentPage * itemsPerPage,
               viewType === 'frames' ? filteredFrames.length : mergedImages.length
-            )}{' '}
+            )}
             / {viewType === 'frames' ? filteredFrames.length : mergedImages.length}
           </div>
 

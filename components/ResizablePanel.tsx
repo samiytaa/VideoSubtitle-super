@@ -102,65 +102,66 @@ const ResizablePanel: React.FC<ResizablePanelProps> = ({
   };
 
   return (
+    // 外层：overflow-visible，让按钮可以突出边缘
     <div
-      ref={panelRef}
-      className="relative bg-white border-r border-gray-200 transition-all duration-300 overflow-hidden h-full"
+      className="relative h-full shrink-0 transition-all duration-300"
       style={{
         width: isCollapsed ? collapsedWidth : width,
         minWidth: isCollapsed ? collapsedWidth : minWidth,
         maxWidth: isCollapsed ? collapsedWidth : maxWidth
       }}
     >
-      {isCollapsed ? (
-        // 折叠状态
-        <div className="h-full flex flex-col items-center justify-start pt-6 px-2">
-          <button
-            onClick={toggleCollapse}
-            className="p-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
-            title="展开面板"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <div className="[writing-mode:vertical-rl] text-xs text-gray-500 mt-3">
-            校对图片
-          </div>
-        </div>
-      ) : (
-        // 展开状态
-        <>
-          {/* 内容区域 */}
-          <div className="h-full p-2">
-            {children}
-          </div>
-
-          {/* 折叠按钮 */}
-          <button
-            onClick={toggleCollapse}
-            className="absolute top-2 right-2 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors z-10"
-            title="折叠面板"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-
-          {/* 拖动手柄 */}
-          <div
-            onMouseDown={handleMouseDown}
-            className={`absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-500 transition-colors ${
-              isResizing ? 'bg-indigo-500' : 'bg-transparent'
-            }`}
-            title="拖动调整宽度"
-          />
-
-          {/* 拖动时的遮罩提示 */}
-          {isResizing && (
-            <div className="absolute inset-0 bg-indigo-50 bg-opacity-10 pointer-events-none flex items-center justify-center">
-              <div className="bg-indigo-600 text-white px-3 py-1 rounded text-xs">
-                {Math.round(width)}px
-              </div>
+      {/* 内层面板：overflow-hidden 裁切内容 */}
+      <div
+        ref={panelRef}
+        className="relative bg-white border-r border-gray-200 overflow-hidden h-full w-full"
+      >
+        {isCollapsed ? (
+          // 折叠状态：只显示竖向文字标签
+          <div className="h-full flex flex-col items-center justify-center px-1">
+            <div className="[writing-mode:vertical-rl] text-xs text-gray-400 select-none tracking-widest">
+              校对图片
             </div>
-          )}
-        </>
-      )}
+          </div>
+        ) : (
+          // 展开状态：内容 + 拖动手柄
+          <>
+            <div className="h-full p-2">
+              {children}
+            </div>
+
+            {/* 拖动手柄 */}
+            <div
+              onMouseDown={handleMouseDown}
+              className={`absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400 transition-colors ${
+                isResizing ? 'bg-indigo-400' : 'bg-transparent'
+              }`}
+              title="拖动调整宽度"
+            />
+
+            {/* 拖动时的宽度提示 */}
+            {isResizing && (
+              <div className="absolute inset-0 bg-indigo-50/10 pointer-events-none flex items-center justify-center">
+                <div className="bg-indigo-600 text-white px-3 py-1 rounded text-xs shadow">
+                  {Math.round(width)}px
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* 收缩/展开 toggle 按钮：绝对定位在外层，不受 overflow-hidden 裁切 */}
+      <button
+        onClick={toggleCollapse}
+        className="absolute top-1/2 -translate-y-1/2 -right-3 z-20 flex items-center justify-center w-6 h-14 bg-white border border-gray-200 rounded-r-xl shadow-[2px_2px_8px_rgba(0,0,0,0.10)] hover:bg-indigo-50 hover:border-indigo-300 hover:shadow-[2px_2px_12px_rgba(99,102,241,0.18)] transition-all duration-200 group"
+        title={isCollapsed ? '展开面板' : '折叠面板'}
+      >
+        {isCollapsed
+          ? <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-500 transition-colors duration-200" />
+          : <ChevronLeft  className="w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-500 transition-colors duration-200" />
+        }
+      </button>
     </div>
   );
 };

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { avatarMap, getAvatarPath } from '../utils/avatarMap';
-import { X, Search, Star, Clock, Grid2x2, ZoomIn, ZoomOut, RotateCcw, Image as ImageIcon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Search, Star, Clock, Grid2x2, ZoomIn, ZoomOut, RotateCcw, Image as ImageIcon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ChevronUp } from 'lucide-react';
 import CompactGallery from './CompactGallery';
 import { ExtractedFrame, VideoFile, ROI } from '../types';
 
@@ -458,7 +458,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="relative flex items-center px-5 py-2 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+        <div className="relative flex items-center px-5 py-2 border-b border-gray-200 bg-linear-to-r from-gray-50 to-white">
           <h2 className="text-sm font-semibold text-gray-800 shrink-0">选择头像</h2>
           <div className="absolute left-1/2 -translate-x-1/2 w-96">
             <div className="relative group">
@@ -643,67 +643,87 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
               )}
             </div>
 
-            {/* 校对图片区域 */}
-            <div
-              className="border-t border-gray-200 bg-white shrink-0 flex flex-col relative transition-all duration-300"
-              style={{ height: isProofreadCollapsed ? COLLAPSED_PROOFREAD_HEIGHT : proofreadHeight }}
-            >
-              {isProofreadCollapsed ? (
-                // 折叠状态 - 左侧垂直条
-                <div className="h-full flex items-center justify-start px-2">
-                  <button
-                    onClick={() => setIsProofreadCollapsed(false)}
-                    className="p-1.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-all text-xs flex items-center gap-1.5 group"
-                    title="展开校对图片"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5 group-hover:animate-pulse" />
-                    <ImageIcon className="w-3.5 h-3.5" />
-                    <span className="text-[10px]">校对图片</span>
-                  </button>
-                </div>
-              ) : (
-                // 展开状态
-                <>
-                  {/* 上方拖拽手柄 */}
+            {/* 校对图片区域：外层 overflow-visible 让按钮可突出顶部边缘 */}
+            <div className="relative shrink-0 flex flex-col">
+              {/* 收起/展开 toggle 按钮：绝对定位在外层顶部中央，不受 overflow-hidden 裁切 */}
+              <button
+                onClick={() => setIsProofreadCollapsed(v => !v)}
+                className="absolute left-1/2 -translate-x-1/2 -top-3 z-20 flex items-center justify-center h-6 w-14 bg-white border border-gray-200 rounded-b-xl shadow-[0px_2px_8px_rgba(0,0,0,0.10)] hover:bg-indigo-50 hover:border-indigo-300 hover:shadow-[0px_2px_12px_rgba(99,102,241,0.18)] active:scale-95 transition-all duration-200 group"
+                title={isProofreadCollapsed ? '展开校对图片' : '收起校对图片'}
+              >
+                <ChevronUp
+                  style={{ transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}
+                  className={`w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-500 transition-colors duration-200 ${
+                    isProofreadCollapsed ? 'rotate-180' : 'rotate-0'
+                  }`}
+                />
+              </button>
+
+              {/* 折叠条：始终可见，高度固定 */}
+              <div className="border-t border-gray-200 bg-white h-10 flex items-center justify-center gap-2 shrink-0">
+                <ImageIcon
+                  size={13}
+                  style={{ transition: 'color 0.35s ease' }}
+                  className={isProofreadCollapsed ? 'text-gray-400' : 'text-indigo-400'}
+                />
+                <span
+                  style={{ transition: 'color 0.35s ease, font-weight 0.35s ease' }}
+                  className={`text-xs select-none tracking-widest ${isProofreadCollapsed ? 'text-gray-400' : 'text-indigo-500 font-medium'}`}
+                >
+                  校对图片
+                </span>
+              </div>
+
+              {/* 内容区：grid 动画，cubic-bezier 弹性缓动 */}
+              <div
+                className="grid"
+                style={{
+                  gridTemplateRows: isProofreadCollapsed ? '0fr' : '1fr',
+                  transition: 'grid-template-rows 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
+                }}
+              >
+                <div className="overflow-hidden" style={{ minHeight: 0 }}>
+                  {/* 内容淡入淡出 */}
                   <div
-                    onMouseDown={handleProofreadResizeMouseDown}
-                    className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize z-10 group"
-                    title="拖动调整高度"
+                    style={{
+                      opacity: isProofreadCollapsed ? 0 : 1,
+                      transform: isProofreadCollapsed ? 'translateY(6px)' : 'translateY(0)',
+                      transition: isProofreadCollapsed
+                        ? 'opacity 0.2s ease, transform 0.2s ease'
+                        : 'opacity 0.3s ease 0.15s, transform 0.3s ease 0.15s',
+                    }}
                   >
-                    <div className="absolute inset-x-0 top-0 h-1 bg-transparent group-hover:bg-indigo-400 transition-colors" />
-                  </div>
-
-                  {/* 标题栏 */}
-                  <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-white">
-                    <div className="flex items-center gap-2">
-                      <ImageIcon size={14} className="text-indigo-600" />
-                      <span className="text-xs font-medium text-gray-700">校对图片</span>
-                    </div>
-                    <button
-                      onClick={() => setIsProofreadCollapsed(true)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-gray-300 hover:border-indigo-400 hover:bg-indigo-50 rounded-md transition-all shadow-sm hover:shadow group"
-                      title="收起面板"
+                    {/* 固定高度内容容器，由 proofreadHeight 控制 */}
+                    <div
+                      className="relative bg-white"
+                      style={{ height: proofreadHeight }}
                     >
-                      <span className="text-[10px] text-gray-600 group-hover:text-indigo-600 font-medium">收起</span>
-                      <ChevronRight className="w-3.5 h-3.5 text-gray-500 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all" />
-                    </button>
-                  </div>
+                      {/* 上方拖拽手柄 */}
+                      <div
+                        onMouseDown={handleProofreadResizeMouseDown}
+                        className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize z-10 group"
+                        title="拖动调整高度"
+                      >
+                        <div className="absolute inset-x-0 top-0 h-1 bg-transparent group-hover:bg-indigo-400 transition-colors" />
+                      </div>
 
-                  {/* 内容区域 */}
-                  <div className="flex-1 overflow-hidden">
-                    <CompactGallery
-                      frames={extractedFrames}
-                      onDelete={onDeleteFrames}
-                      onJumpToTime={onJumpToTime}
-                      activeVideo={activeVideo}
-                      videoSrc={videoSrc}
-                      sharedVideoRef={sharedVideoRef}
-                      roi={roi}
-                      onCaptureFrame={onCaptureFrame}
-                    />
+                      {/* 内容区域 */}
+                      <div className="h-full overflow-hidden">
+                        <CompactGallery
+                          frames={extractedFrames}
+                          onDelete={onDeleteFrames}
+                          onJumpToTime={onJumpToTime}
+                          activeVideo={activeVideo}
+                          videoSrc={videoSrc}
+                          sharedVideoRef={sharedVideoRef}
+                          roi={roi}
+                          onCaptureFrame={onCaptureFrame}
+                        />
+                      </div>
+                    </div>
                   </div>
-                </>
-              )}
+                </div>
+              </div>
             </div>
           </div>
 

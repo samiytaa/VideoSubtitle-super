@@ -1,5 +1,35 @@
 const { app, BrowserWindow, Menu } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
+
+let web2apiProcess = null;
+
+function startWeb2ApiServer() {
+  if (web2apiProcess) return;
+  const web2apiDir = path.join(__dirname, '../integrated/web2api');
+  const serverPath = path.join(web2apiDir, 'src/server.js');
+
+  web2apiProcess = spawn(process.execPath, [serverPath], {
+    cwd: web2apiDir,
+    windowsHide: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      VITE_DEV: '0',
+      PORT: process.env.PORT || '3000'
+    }
+  });
+
+  web2apiProcess.on('exit', () => {
+    web2apiProcess = null;
+  });
+}
+
+function stopWeb2ApiServer() {
+  if (!web2apiProcess) return;
+  web2apiProcess.kill();
+  web2apiProcess = null;
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -19,6 +49,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  startWeb2ApiServer();
   Menu.setApplicationMenu(null);
   createWindow();
   app.on('activate', () => {
@@ -27,5 +58,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopWeb2ApiServer();
   if (process.platform !== 'darwin') app.quit();
 });

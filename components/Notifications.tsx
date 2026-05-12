@@ -17,6 +17,13 @@ interface ConfirmOptions {
   onCancel: () => void;
 }
 
+interface ChoiceOptions {
+  title: string;
+  message: string;
+  buttons: Array<{ label: string; value: string; variant?: 'primary' | 'danger' | 'default' }>;
+  onChoice: (value: string) => void;
+}
+
 interface PromptOptions {
   title: string;
   message: string;
@@ -34,6 +41,7 @@ interface AlertOptions {
 interface NotificationContextType {
   addToast: (message: string, type?: ToastType) => void;
   showConfirm: (options: Omit<ConfirmOptions, 'onConfirm' | 'onCancel'>) => Promise<boolean>;
+  showChoice: (options: Omit<ChoiceOptions, 'onChoice'>) => Promise<string>;
   showPrompt: (options: Omit<PromptOptions, 'onSubmit' | 'onCancel'>) => Promise<string | null>;
   showAlert: (message: string, title?: string) => Promise<void>;
 }
@@ -66,9 +74,9 @@ const Toast: React.FC<{ toast: ToastMessage; onDismiss: (id: number) => void }> 
   }, [dismiss]);
 
   const icons = {
-    success: <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />,
-    error: <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />,
-    info: <Info className="w-5 h-5 text-blue-500 flex-shrink-0" />,
+    success: <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />,
+    error: <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />,
+    info: <Info className="w-5 h-5 text-blue-500 shrink-0" />,
   };
 
   const borderColors = {
@@ -86,7 +94,7 @@ const Toast: React.FC<{ toast: ToastMessage; onDismiss: (id: number) => void }> 
       <p className="flex-1 text-sm font-medium text-gray-900 leading-snug">{toast.message}</p>
       <button
         onClick={dismiss}
-        className="flex-shrink-0 rounded-md p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+        className="shrink-0 rounded-md p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
         aria-label="关闭"
       >
         <X className="h-4 w-4" />
@@ -100,7 +108,7 @@ const Modal: React.FC<{ isOpen: boolean; children: ReactNode; onClose?: () => vo
   if (!isOpen) return null;
   return (
     <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-10000 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in"
       onMouseDown={onClose}
     >
       <div
@@ -117,6 +125,7 @@ const Modal: React.FC<{ isOpen: boolean; children: ReactNode; onClose?: () => vo
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [confirmOptions, setConfirmOptions] = useState<ConfirmOptions | null>(null);
+  const [choiceOptions, setChoiceOptions] = useState<ChoiceOptions | null>(null);
   const [promptOptions, setPromptOptions] = useState<PromptOptions | null>(null);
   const [alertOptions, setAlertOptions] = useState<AlertOptions | null>(null);
 
@@ -140,6 +149,15 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
             onCancel: () => { setConfirmOptions(null); resolve(false); }
         });
       });
+  }, []);
+
+  const showChoice = useCallback((options: Omit<ChoiceOptions, 'onChoice'>) => {
+    return new Promise<string>((resolve) => {
+      setChoiceOptions({
+        ...options,
+        onChoice: (value: string) => { setChoiceOptions(null); resolve(value); }
+      });
+    });
   }, []);
   
   const handleConfirmClose = () => {
@@ -188,13 +206,13 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     }
   };
 
-  const value = { addToast, showConfirm, showPrompt, showAlert };
+  const value = { addToast, showConfirm, showChoice, showPrompt, showAlert };
 
   return (
     <NotificationContext.Provider value={value}>
       {children}
       
-      <div className="fixed top-14 left-1/2 -translate-x-1/2 z-[10001] space-y-2 w-full max-w-sm px-4">
+      <div className="fixed top-14 left-1/2 -translate-x-1/2 z-10001 space-y-2 w-full max-w-sm px-4">
         {toasts.map(toast => (
           <Toast key={toast.id} toast={toast} onDismiss={dismissToast} />
         ))}
@@ -203,7 +221,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
       <Modal isOpen={!!confirmOptions} onClose={handleConfirmClose}>
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-yellow-100">
+            <div className="shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-yellow-100">
               <AlertTriangle className="h-5 w-5 text-yellow-600" />
             </div>
             <div className="flex-1 min-w-0">
@@ -227,6 +245,40 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
           >
             取消
           </button>
+        </div>
+      </Modal>
+
+      <Modal isOpen={!!choiceOptions} onClose={() => choiceOptions?.onChoice('cancel')}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-yellow-100">
+              <AlertTriangle className="h-5 w-5 text-yellow-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base font-semibold text-gray-900 leading-snug">{choiceOptions?.title}</h3>
+              <p className="mt-1.5 text-sm text-gray-500 leading-relaxed">{choiceOptions?.message}</p>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-row-reverse gap-2 px-6 py-4 bg-gray-50 border-t border-gray-100">
+          {choiceOptions?.buttons.map((btn) => {
+            const variantClass =
+              btn.variant === 'primary'
+                ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
+                : btn.variant === 'danger'
+                ? 'bg-red-600 text-white hover:bg-red-700 shadow-sm'
+                : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50';
+            return (
+              <button
+                key={btn.value}
+                type="button"
+                className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors ${variantClass}`}
+                onClick={() => choiceOptions.onChoice(btn.value)}
+              >
+                {btn.label}
+              </button>
+            );
+          })}
         </div>
       </Modal>
 
@@ -265,7 +317,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
       <Modal isOpen={!!alertOptions} onClose={handleAlertClose}>
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-blue-100">
+            <div className="shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-blue-100">
               <Info className="h-5 w-5 text-blue-600" />
             </div>
             <div className="flex-1 min-w-0">

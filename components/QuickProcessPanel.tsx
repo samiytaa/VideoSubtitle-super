@@ -184,10 +184,10 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                 disabled={isProcessing}
               />
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-50 rounded-lg text-indigo-500 flex-shrink-0">
+                <div className="p-2 bg-indigo-50 rounded-lg text-indigo-500 shrink-0">
                   <Upload className="w-4 h-4" />
                 </div>
-                <div className="flex-grow min-w-0">
+                <div className="grow min-w-0">
                   <p className="text-sm font-medium text-gray-700 truncate">{srtFile ? srtFile.name : '选择文件'}</p>
                   <p className="text-xs text-gray-400">{srtFile ? '将按 SRT 时间段截取' : '未上传时使用固定帧间隔截取'}</p>
                 </div>
@@ -195,7 +195,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                   <button
                     type="button"
                     onClick={e => { e.stopPropagation(); setSrtFile(null); }}
-                    className="z-20 relative p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                    className="z-20 relative p-1 text-gray-400 hover:text-red-500 transition-colors shrink-0"
                     disabled={isProcessing}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -247,7 +247,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                 type="checkbox" checked={skipSubtitleDialogue}
                 onChange={e => { setSkipSubtitleDialogue(e.target.checked); persistPrefs({ skipSubtitleDialogue: e.target.checked }); }}
                 disabled={isProcessing || !srtFile}
-                className="w-3.5 h-3.5 text-amber-600 border-gray-300 rounded focus:ring-1 focus:ring-amber-500 flex-shrink-0"
+                className="w-3.5 h-3.5 text-amber-600 border-gray-300 rounded focus:ring-1 focus:ring-amber-500 shrink-0"
               />
               <span className={`text-xs ${srtFile ? 'text-amber-800' : 'text-gray-400'}`}>
                 跳过包含字幕的区域
@@ -260,7 +260,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                 type="checkbox" checked={autoDeduplicationDialogue}
                 onChange={e => { setAutoDeduplicationDialogue(e.target.checked); persistPrefs({ autoDeduplicationDialogue: e.target.checked }); }}
                 disabled={isProcessing}
-                className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 flex-shrink-0"
+                className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 shrink-0"
               />
               <span className="text-xs text-blue-800">截取完成后自动去重</span>
             </label>
@@ -306,7 +306,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                 type="checkbox" checked={skipSubtitleLocation}
                 onChange={e => { setSkipSubtitleLocation(e.target.checked); persistPrefs({ skipSubtitleLocation: e.target.checked }); }}
                 disabled={isProcessing || !srtFile}
-                className="w-3.5 h-3.5 text-amber-600 border-gray-300 rounded focus:ring-1 focus:ring-amber-500 flex-shrink-0"
+                className="w-3.5 h-3.5 text-amber-600 border-gray-300 rounded focus:ring-1 focus:ring-amber-500 shrink-0"
               />
               <span className={`text-xs ${srtFile ? 'text-amber-800' : 'text-gray-400'}`}>
                 跳过包含字幕的区域
@@ -319,7 +319,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                 type="checkbox" checked={autoDeduplicationLocation}
                 onChange={e => { setAutoDeduplicationLocation(e.target.checked); persistPrefs({ autoDeduplicationLocation: e.target.checked }); }}
                 disabled={isProcessing}
-                className="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-1 focus:ring-green-500 flex-shrink-0"
+                className="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-1 focus:ring-green-500 shrink-0"
               />
               <span className="text-xs text-green-800">截取完成后自动去重</span>
             </label>
@@ -336,13 +336,13 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
             {/* 总进度标题行 */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <svg className="w-3.5 h-3.5 animate-spin text-indigo-600 flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                <svg className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
                 <span className="text-xs font-semibold text-gray-700 truncate max-w-[320px]">{progress.message}</span>
               </div>
-              <span className={`text-xs font-bold tabular-nums flex-shrink-0 ${progress.stage === 'deduplicating' ? 'text-purple-600' : 'text-indigo-600'}`}>
+              <span className={`text-xs font-bold tabular-nums shrink-0 ${progress.stage === 'deduplicating' ? 'text-purple-600' : 'text-indigo-600'}`}>
                 {Math.round(progress.current)}%
               </span>
             </div>
@@ -352,10 +352,10 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
               <div
                 className={`h-full rounded-full transition-all duration-300 ${
                   progress.stage === 'deduplicating'
-                    ? 'bg-gradient-to-r from-purple-500 to-purple-400'
+                    ? 'bg-linear-to-r from-purple-500 to-purple-400'
                     : progress.message.includes('地点')
-                    ? 'bg-gradient-to-r from-green-500 to-green-400'
-                    : 'bg-gradient-to-r from-indigo-500 to-blue-400'
+                    ? 'bg-linear-to-r from-green-500 to-green-400'
+                    : 'bg-linear-to-r from-indigo-500 to-blue-400'
                 }`}
                 style={{ width: `${Math.min(100, Math.max(0, progress.current))}%` }}
               />
@@ -382,7 +382,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                 截取对话
               </div>
 
-              <svg className="w-3 h-3 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
 
@@ -409,7 +409,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                 截取地点
               </div>
 
-              <svg className="w-3 h-3 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
 

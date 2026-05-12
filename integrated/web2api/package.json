@@ -1,0 +1,22 @@
+{
+  "name": "Web2API",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently --log-file logs/dev-server.log \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cross-env VITE_DEV=1 node src/server.js",
+    "dev:client": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.6",
+    "concurrently": "9.1.2",
+    "cross-env": "7.0.3",
+    "vue": "^3.5.34"
+  },
+  "devDependencies": {
+    "vite": "6.3.5"
+  }
+}

@@ -54,7 +54,6 @@ export interface GalleryToolbarProps {
   onToggleRangeSelectMode: () => void;
   onClearSelection: () => void;
   onMergeSelected: () => void;
-  onOneClickRecognize: () => void;
   onBatchSizeChange: (size: number) => void;
   onRemoveDuplicates: () => void;
   onImportClick: () => void;

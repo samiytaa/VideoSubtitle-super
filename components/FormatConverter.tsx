@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNotifier } from './Notifications';
 import { convertTextMainline, convertTextMitan, reverseConvertText } from '../utils/textConversionUtils';
 
-const TextProofreader: React.FC = () => {
+const FormatConverter: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [outputText, setOutputText] = useState('');
   const [mode, setMode] = useState<'mitan' | 'mainline'>('mitan');
@@ -174,7 +174,7 @@ const TextProofreader: React.FC = () => {
             role="tab"
             aria-selected={mode === 'mitan'}
             onClick={() => setMode('mitan')}
-            className={`min-w-[4.75rem] rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-150 ${
+            className={`min-w-19 rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-150 ${
               mode === 'mitan'
                 ? 'bg-indigo-600 text-white shadow-sm'
                 : 'text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'
@@ -186,7 +186,7 @@ const TextProofreader: React.FC = () => {
             role="tab"
             aria-selected={mode === 'mainline'}
             onClick={() => setMode('mainline')}
-            className={`min-w-[4.75rem] rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-150 ${
+            className={`min-w-19 rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-150 ${
               mode === 'mainline'
                 ? 'bg-indigo-600 text-white shadow-sm'
                 : 'text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'
@@ -210,7 +210,7 @@ const TextProofreader: React.FC = () => {
           </div>
 
           {infoDialogOpen && (
-            <div className="absolute left-1/2 top-full z-50 mt-2 w-[26rem] -translate-x-1/2 rounded-2xl border border-gray-200 bg-white shadow-2xl">
+            <div className="absolute left-1/2 top-full z-50 mt-2 w-104 -translate-x-1/2 rounded-2xl border border-gray-200 bg-white shadow-2xl">
               {/* 标题栏 */}
               <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-gray-100">
                 <BookOpen className="h-4 w-4 text-indigo-600 shrink-0" />
@@ -423,4 +423,4 @@ const TextProofreader: React.FC = () => {
   );
 };
 
-export default TextProofreader;
+export default FormatConverter;

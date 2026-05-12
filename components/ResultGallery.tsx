@@ -425,11 +425,6 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
         onToggleRangeSelectMode={toggleRangeSelectMode}
         onClearSelection={() => { setSelectedIds(new Set()); setSelectedOrder([]); }}
         onMergeSelected={handleMergeSelected}
-        onOneClickRecognize={() => {
-          onOneClickRecognize?.();
-          setSelectedIds(new Set());
-          setSelectedOrder([]);
-        }}
         onBatchSizeChange={setBatchSize}
         onRemoveDuplicates={handleRemoveDuplicates}
         onImportClick={handleImportClick}

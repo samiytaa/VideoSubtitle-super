@@ -22,3 +22,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Sub-project build artifacts
+integrated/web2api/dist/
+integrated/web2api/node_modules/
+
+# Release output
+release/

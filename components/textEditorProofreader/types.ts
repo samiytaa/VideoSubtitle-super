@@ -1,3 +1,6 @@
+export type NarrationType = 'narration' | 'narration-thought';
+export type ModalKey = 'avatar' | 'nestedAvatar' | 'subAvatar' | 'batchAvatar' | 'search' | 'quickReplace';
+
 export interface ParsedBlock {
   type: 'header' | 'narration' | 'dialogue' | 'narration-thought' | 'footer' | 'choice' | 'nested-choice' | 'nested-choice-group';
   content: string;
@@ -16,4 +19,15 @@ export interface Chapter {
   chapterNum: string;
   blocks: ParsedBlock[];
   format?: 'spy' | 'general';
+}
+
+export interface SearchResult {
+  chapterIndex: number;
+  blockIndex: number;
+  type: 'narration' | 'dialogue' | 'character' | 'nested-option';
+  content: string;
+  character?: string;
+  matchText: string;
+  nestedShowIndex?: number;
+  nestedBi?: number;
 }
