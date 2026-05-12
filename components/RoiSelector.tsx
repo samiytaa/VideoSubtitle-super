@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ExtractedFrame, ROI, RoiPreset, VideoFile } from '../types';
 import { formatTimestampDisplay, generateFilename } from '../utils/filenameUtils';
 import { useNotifier } from './Notifications';
+import { handleError } from '../utils/errorHandler';
 import PresetPanel from './roiSelector/PresetPanel';
 import QuickProcessDialog from './roiSelector/QuickProcessDialog';
 import SavePresetDialog from './roiSelector/SavePresetDialog';
@@ -82,7 +83,7 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
         };
       }
     } catch (e) {
-      console.error('Failed to restore video state:', e);
+      handleError(e, undefined, { context: 'Failed to restore video state' });
     }
     return {
       currentTime: 0,
@@ -167,7 +168,7 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
       try {
         sessionStorage.setItem(videoStateKey, JSON.stringify({ currentTime, startTime, endTime, cropBox, currentPresetName }));
       } catch (e) {
-        console.error('Failed to save video state:', e);
+        handleError(e, notifier, { context: 'Failed to save video state' });
       }
     }, 300);
     return () => clearTimeout(timeoutId);

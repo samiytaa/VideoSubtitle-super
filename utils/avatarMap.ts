@@ -1,6 +1,7 @@
 // 头像路径映射表
 // 自动生成，请勿手动编辑
 // 生成命令: python generate_avatar_map.py
+import { logger } from './logger';
 
 export const avatarMap: { [key: string]: string } = {
   '世子常服-严肃': '广陵王头像/世子常服/世子常服-严肃.png',
@@ -783,7 +784,7 @@ export const getAvatarPath = (avatarName: string): string | null => {
   
   const relativePath = avatarMap[avatarName];
   if (!relativePath) {
-    console.warn(`未找到头像映射: ${avatarName}`);
+    logger.warn(`未找到头像映射: ${avatarName}`);
     return null;
   }
   

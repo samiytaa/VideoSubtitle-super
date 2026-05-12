@@ -1,17 +1,78 @@
 export type NarrationType = 'narration' | 'narration-thought';
 export type ModalKey = 'avatar' | 'nestedAvatar' | 'subAvatar' | 'batchAvatar' | 'search' | 'quickReplace';
 
-export interface ParsedBlock {
-  type: 'header' | 'narration' | 'dialogue' | 'narration-thought' | 'footer' | 'choice' | 'nested-choice' | 'nested-choice-group';
+export interface ChoiceOption {
+  label: string;
+  blocks: ParsedBlock[];
+}
+
+export interface NestedOption {
+  label: string;
+  showIndex: number;
+  blocks: ParsedBlock[];
+}
+
+export type HeaderBlock = {
+  type: 'header';
   content: string;
-  character?: string;
-  chapter?: string;
-  avatarStyle?: string;
+  character: string;
+  chapter: string;
+};
+
+export type FooterBlock = {
+  type: 'footer';
+  content: string;
+  character: string;
+  chapter: string;
+};
+
+export type NarrationBlock = {
+  type: 'narration';
+  content: string;
+};
+
+export type NarrationThoughtBlock = {
+  type: 'narration-thought';
+  content: string;
+};
+
+export type DialogueBlock = {
+  type: 'dialogue';
+  content: string;
+  character: string;
+  avatarStyle: string;
   customColor?: string;
-  choiceOptions?: { label: string; blocks: ParsedBlock[] }[];
-  nestedChoiceLabel?: string;
-  nestedChoiceIndex?: number;
-  nestedOptions?: { label: string; showIndex: number; blocks: ParsedBlock[] }[];
+};
+
+export type ChoiceBlock = {
+  type: 'choice';
+  content: string;
+  choiceOptions: ChoiceOption[];
+};
+
+export type NestedChoiceBlock = {
+  type: 'nested-choice';
+  content: string;
+};
+
+export type NestedChoiceGroupBlock = {
+  type: 'nested-choice-group';
+  content: string;
+  nestedOptions: NestedOption[];
+};
+
+export type ParsedBlock =
+  | HeaderBlock
+  | FooterBlock
+  | NarrationBlock
+  | NarrationThoughtBlock
+  | DialogueBlock
+  | ChoiceBlock
+  | NestedChoiceBlock
+  | NestedChoiceGroupBlock;
+
+export function isDialogueBlock(block: ParsedBlock): block is DialogueBlock {
+  return block.type === 'dialogue';
 }
 
 export interface Chapter {

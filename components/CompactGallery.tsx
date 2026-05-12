@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { CheckSquare, Square, ExternalLink, Trash2, X, Upload, Image as ImageIcon, Video, Scissors } from 'lucide-react';
 import { ExtractedFrame, VideoFile, ROI } from '../types';
 import { useNotifier } from './Notifications';
+import { confirmDelete } from '../utils/confirmActions';
 
 interface CompactGalleryProps {
   frames: ExtractedFrame[];
@@ -261,6 +262,21 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
   const totalPages = React.useMemo(() => {
     return Math.max(1, Math.ceil(filteredFrames.length / itemsPerPage));
   }, [filteredFrames, itemsPerPage]);
+  
+  const selectedCountInView = React.useMemo(
+    () => filteredFrames.reduce((count, frame) => count + (selectedIds.has(frame.id) ? 1 : 0), 0),
+    [filteredFrames, selectedIds]
+  );
+
+  const groupCounts = React.useMemo(() => {
+    let group1 = 0;
+    let group2 = 0;
+    for (const frame of frames) {
+      if (frame.group === 'group1') group1 += 1;
+      else if (frame.group === 'group2') group2 += 1;
+    }
+    return { all: frames.length, group1, group2 };
+  }, [frames]);
 
   // 保存当前分组的页数和每页数量到 localStorage
   useEffect(() => {
@@ -385,10 +401,7 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
       return;
     }
 
-    const confirmed = await notifier.showConfirm({
-      title: '确认删除',
-      message: `确定要删除选中的 ${selectedInCurrentView.length} 张图片吗？`
-    });
+    const confirmed = await confirmDelete(selectedInCurrentView.length, '选中', notifier);
 
     if (confirmed && onDelete) {
       const idsToDelete = selectedInCurrentView.map(item => item.id);
@@ -435,9 +448,9 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
         {panelTab === 'images' && (
           <div className="flex items-center gap-1">
             {[
-              { key: 'all', label: '全部', count: frames.length },
-              { key: 'group1', label: '【对话】', count: frames.filter(f => f.group === 'group1').length },
-              { key: 'group2', label: '【地点】', count: frames.filter(f => f.group === 'group2').length }
+              { key: 'all', label: '全部', count: groupCounts.all },
+              { key: 'group1', label: '【对话】', count: groupCounts.group1 },
+              { key: 'group2', label: '【地点】', count: groupCounts.group2 }
             ].map(({ key, label, count }) => (
               <button
                 key={key}
@@ -521,7 +534,7 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
             {selectedIds.size > 0 && (
               <>
                 <span className="text-xs text-indigo-600 font-medium">
-                  已选 {filteredFrames.filter(f => selectedIds.has(f.id)).length}
+                  已选 {selectedCountInView}
                 </span>
                 <button 
                   onClick={() => setSelectedIds(new Set())}

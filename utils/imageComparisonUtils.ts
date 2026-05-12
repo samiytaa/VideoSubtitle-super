@@ -1,4 +1,5 @@
 import pixelmatch from 'pixelmatch';
+import { handleError } from './errorHandler';
 
 /**
  * 加载图片
@@ -107,7 +108,7 @@ export async function removeDuplicateImages(
         keepIndices.add(i);
       }
     } catch (error) {
-      console.error(`比较图片 ${i - 1} 和 ${i} 时出错:`, error);
+      handleError(error, undefined, { context: `比较图片 ${i - 1} 和 ${i} 时出错` });
       // 出错时保留当前图片
       keepIndices.add(i);
     }
@@ -215,7 +216,7 @@ export async function removeDuplicateImagesAdvanced(
           keepIndices.delete(i);
         }
       } catch (error) {
-        console.error(`比较图片 ${i} 和 ${i + 1} 时出错:`, error);
+        handleError(error, undefined, { context: `比较图片 ${i} 和 ${i + 1} 时出错` });
       }
     }
 
@@ -259,7 +260,7 @@ export async function removeDuplicateImagesAdvanced(
           onProgress(completedComparisons, totalComparisons);
         }
       } catch (error) {
-        console.error(`比较图片 ${idx1} 和 ${idx2} 时出错:`, error);
+        handleError(error, undefined, { context: `比较图片 ${idx1} 和 ${idx2} 时出错` });
       }
     }
 
@@ -326,7 +327,9 @@ export async function removeDuplicateImagesAdvanced(
           onProgress(completedComparisons, totalComparisons);
         }
       } catch (error) {
-        console.error(`比较边界图片 ${lastKeptInCurrent} 和 ${firstKeptInNext} 时出错:`, error);
+        handleError(error, undefined, {
+          context: `比较边界图片 ${lastKeptInCurrent} 和 ${firstKeptInNext} 时出错`,
+        });
       }
     }
   }

@@ -1,5 +1,5 @@
 import { MutableRefObject } from 'react';
-import { Chapter, ParsedBlock, SearchResult } from './types';
+import { Chapter, isDialogueBlock, ParsedBlock, SearchResult } from './types';
 
 interface UseEditorSearchParams {
   chapters: Chapter[];
@@ -29,11 +29,11 @@ export const useEditorSearch = (params: UseEditorSearchParams) => {
           results.push({ chapterIndex, blockIndex, type: 'narration', content: b.content, matchText: b.content, nestedShowIndex, nestedBi });
         }
       }
-      if (b.type === 'dialogue') {
+      if (isDialogueBlock(b)) {
         if (b.content.includes(keyword)) {
           results.push({ chapterIndex, blockIndex, type: 'dialogue', content: b.content, character: b.character, matchText: b.content, nestedShowIndex, nestedBi });
         }
-        if (b.character && b.character.includes(keyword)) {
+        if (b.character.includes(keyword)) {
           results.push({ chapterIndex, blockIndex, type: 'character', content: b.content, character: b.character, matchText: b.character, nestedShowIndex, nestedBi });
         }
       }
@@ -89,4 +89,3 @@ export const useEditorSearch = (params: UseEditorSearchParams) => {
 
   return { handleSearch, jumpToSearchResult };
 };
-

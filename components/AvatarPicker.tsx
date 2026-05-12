@@ -3,6 +3,7 @@ import { avatarMap, getAvatarPath } from '../utils/avatarMap';
 import { X, Search, Star, Clock, Grid2x2, ZoomIn, ZoomOut, RotateCcw, Image as ImageIcon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ChevronUp } from 'lucide-react';
 import CompactGallery from './CompactGallery';
 import { ExtractedFrame, VideoFile, ROI } from '../types';
+import { handleError } from '../utils/errorHandler';
 
 interface AvatarPickerProps {
   onSelect: (avatarName: string) => void;
@@ -100,7 +101,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
           return parsed;
         }
       } catch (e) {
-        console.error('Failed to parse recent avatars:', e);
+        handleError(e, undefined, { context: 'Failed to parse recent avatars' });
       }
     }
     return [];

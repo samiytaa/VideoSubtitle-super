@@ -9,6 +9,8 @@ import FrameCard from './resultGallery/FrameCard';
 import MergedImageCard from './resultGallery/MergedImageCard';
 import MergeGroupDialog from './resultGallery/MergeGroupDialog';
 import { ResultGalleryProps, ViewType, GroupFilter, ItemsPerRow } from './resultGallery/types';
+import { DEFAULT_MERGE_BATCH_SIZE } from '../config/constants';
+import { confirmDelete } from '../utils/confirmActions';
 
 const ResultGallery: React.FC<ResultGalleryProps> = ({
   frames,
@@ -30,7 +32,7 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
   const [rangeSelectMode, setRangeSelectMode] = useState(false);
   const [rangeStart, setRangeStart] = useState<string | null>(null);
   const [viewType, setViewType] = useState<ViewType>('frames');
-  const [batchSize, setBatchSize] = useState<number>(10);
+  const [batchSize, setBatchSize] = useState<number>(DEFAULT_MERGE_BATCH_SIZE);
   const [selectedGroup, setSelectedGroup] = useState<GroupFilter>('all');
   const [showMergeGroupDialog, setShowMergeGroupDialog] = useState(false);
   const [isDeduplicating, setIsDeduplicating] = useState(false);
@@ -48,7 +50,7 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
 
   const filteredFrames = React.useMemo(() => {
     const filtered =
-      selectedGroup === 'all' ? frames : frames.filter((f) => f.group === selectedGroup);
+      selectedGroup === 'all' ? [...frames] : frames.filter((f) => f.group === selectedGroup);
 
     const groupPriority: Record<string, number> = { g2: 1, g1: 2 };
 
@@ -64,7 +66,7 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
       return match ? match[1] : 'g1';
     };
 
-    return [...filtered].sort((a, b) => {
+    filtered.sort((a, b) => {
       const tA = extractTime(a.filename);
       const tB = extractTime(b.filename);
       if (tA !== tB) return tA - tB;
@@ -73,6 +75,7 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
       if (pA !== pB) return pA - pB;
       return a.filename.localeCompare(b.filename);
     });
+    return filtered;
   }, [frames, selectedGroup, sortTrigger]);
 
   const currentItems = React.useMemo(() => {
@@ -224,23 +227,17 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
     const selected = items.filter((i) => selectedIds.has(i.id));
     if (selected.length === 0) { notifier.addToast('请先选择要删除的图片', 'warning'); return; }
 
-    const confirmed = await notifier.showConfirm({
-      title: '确认删除',
-      message: `确定要删除选中的 ${selected.length} 张图片吗？`,
-    });
+    const confirmed = await confirmDelete(selected.length, '选中', notifier);
     if (!confirmed) return;
 
     const ids = selected.map((i) => i.id);
+    const idSet = new Set(ids);
     if (viewType === 'frames') onDelete?.(ids);
     else onDeleteMerged?.(ids);
 
     const newIds = new Set(selectedIds);
-    const newOrder = [...selectedOrder];
-    ids.forEach((id) => {
-      newIds.delete(id);
-      const idx = newOrder.indexOf(id);
-      if (idx > -1) newOrder.splice(idx, 1);
-    });
+    ids.forEach((id) => newIds.delete(id));
+    const newOrder = selectedOrder.filter((id) => !idSet.has(id));
     setSelectedIds(newIds);
     setSelectedOrder(newOrder);
     notifier.addToast(`已删除 ${selected.length} 张图片`, 'success');
@@ -249,10 +246,11 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
   const handleClearCurrent = async () => {
     const count = viewType === 'frames' ? filteredFrames.length : mergedImages.length;
     if (count === 0) return;
-    const confirmed = await notifier.showConfirm({
-      title: '确认清空',
-      message: `确定要清空所有 ${count} 张${viewType === 'frames' ? '截取' : '拼接'}图片吗？`,
-    });
+    const confirmed = await confirmDelete(
+      count,
+      viewType === 'frames' ? '截取' : '拼接',
+      notifier
+    );
     if (!confirmed) return;
     if (viewType === 'frames') onDelete?.(filteredFrames.map((f) => f.id));
     else onClearMerged?.();
@@ -269,8 +267,9 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
 
   const handleMergeSelected = () => {
     if (selectedIds.size < 1) { notifier.addToast('请至少选择 1 张图片进行拼接', 'warning'); return; }
+    const frameById = new Map(filteredFrames.map((f) => [f.id, f] as const));
     const ordered = selectedOrder
-      .map((id) => filteredFrames.find((f) => f.id === id))
+      .map((id) => frameById.get(id))
       .filter(Boolean) as ExtractedFrame[];
     onMerge(ordered, batchSize);
     setSelectedIds(new Set());

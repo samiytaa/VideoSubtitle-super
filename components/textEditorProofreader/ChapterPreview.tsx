@@ -1,4 +1,5 @@
 import React from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Chapter } from './types';
 
 interface ChapterPreviewProps {
@@ -6,6 +7,7 @@ interface ChapterPreviewProps {
   chapterIndex: number;
   chapters: Chapter[];
   currentChapterIndex: number;
+  scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
   onChapterClick: (index: number) => void;
   renderBlock: (index: number) => React.ReactNode;
 }
@@ -15,15 +17,40 @@ const ChapterPreview: React.FC<ChapterPreviewProps> = ({
   chapterIndex,
   chapters,
   currentChapterIndex,
+  scrollContainerRef,
   onChapterClick,
   renderBlock
 }) => {
   const chapterKey = `${chapter.character}${chapter.chapterNum}`;
+  const virtualizer = useVirtualizer({
+    count: chapter.blocks.length,
+    getScrollElement: () => scrollContainerRef?.current ?? null,
+    estimateSize: () => 110,
+    overscan: 8
+  });
+  const virtualItems = virtualizer.getVirtualItems();
 
   return (
     <div key={chapterKey} className="mb-0">
       <div className="bg-[#e8e8e0] p-5 rounded-lg border border-[#d0d0c8]">
-        {chapter.blocks.map((_, index) => renderBlock(index))}
+        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
+          {virtualItems.map((virtualItem) => (
+            <div
+              key={virtualItem.key}
+              ref={virtualizer.measureElement}
+              data-index={virtualItem.index}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualItem.start}px)`
+              }}
+            >
+              {renderBlock(virtualItem.index)}
+            </div>
+          ))}
+        </div>
       </div>
 
       {chapters[0]?.format !== 'general' && (
@@ -49,4 +76,3 @@ const ChapterPreview: React.FC<ChapterPreviewProps> = ({
 };
 
 export default ChapterPreview;
-

@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { Film, Loader2, UploadCloud, X } from 'lucide-react';
 import { VideoFile } from '../types';
 import { useNotifier } from './Notifications';
+import { handleError } from '../utils/errorHandler';
 
 interface VideoUploaderProps {
   onUpload: (video: VideoFile) => void;
@@ -119,8 +120,10 @@ const VideoUploader: React.FC<VideoUploaderProps> = ({ onUpload, currentVideo })
       setUploadedVideo(videoData);
       onUpload(videoData);
     } catch (error) {
-      console.error('Error processing video:', error);
-      notifier.addToast('无法读取视频文件，请确保文件格式正确。', 'error');
+      handleError(error, notifier, {
+        context: 'Error processing video',
+        userMessage: '无法读取视频文件，请确保文件格式正确。',
+      });
     } finally {
       setIsProcessing(false);
     }

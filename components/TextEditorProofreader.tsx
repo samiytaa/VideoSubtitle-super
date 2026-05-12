@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { getAvatarPath } from '../utils/avatarMap';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNotifier } from './Notifications';
 import { ParsedBlock, Chapter } from './textEditorProofreader/types';
-import { parseText, regenerateInputText, getCharacterColor } from './textEditorProofreader/textParserUtils';
+import { parseText, regenerateInputText } from './textEditorProofreader/textParserUtils';
 import ChoiceBlock from './textEditorProofreader/ChoiceBlock';
 import NestedChoiceGroup from './textEditorProofreader/NestedChoiceGroup';
 import InputPanel from './textEditorProofreader/InputPanel';
@@ -17,6 +16,12 @@ import { STORAGE_KEYS } from './textEditorProofreader/storageKeys';
 import { useEditorSearch } from './textEditorProofreader/useEditorSearch';
 import { useBulkAvatarActions } from './textEditorProofreader/useBulkAvatarActions';
 import { ExtractedFrame, VideoFile, ROI } from '../types';
+import { produce } from 'immer';
+import { EditorBlockContext, EditorBlockContextValue, InsertBlockType } from './textEditorProofreader/context/EditorBlockContext';
+import { useMenuState } from './textEditorProofreader/hooks/useMenuState';
+import { useBlockOperations } from './textEditorProofreader/hooks/useBlockOperations';
+import { DialogueBlockItem, NarrationBlockItem, NarrationThoughtBlockItem } from './textEditorProofreader/components/blocks';
+import { handleError } from '../utils/errorHandler';
 
 interface TextEditorProofreaderProps {
   extractedFrames?: ExtractedFrame[];
@@ -28,6 +33,7 @@ interface TextEditorProofreaderProps {
   roi?: ROI | null;
   onCaptureFrame?: (frame: ExtractedFrame) => void;
 }
+
 
 const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
   extractedFrames = [],
@@ -165,8 +171,14 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     }
   }, [chapters, currentChapterIndex, characterName, setCurrentChapterIndex]);
   const chapterRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
-
-  const getUpdatedChapters = () => [...chapters];
+  const {
+    activeInsertMenuIndex,
+    activeNarrationConvertMenuIndex,
+    toggleInsertMenu,
+    toggleNarrationConvertMenu,
+    closeInsertMenu,
+    closeNarrationConvertMenu
+  } = useMenuState();
 
   const createNewBlock = (
     type: 'narration' | 'narration-thought' | 'dialogue' | 'nested-choice-group'
@@ -200,6 +212,25 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     setChapters(nextChapters);
     setInputText(regenerateInputText(nextChapters));
   };
+
+  const updateChapters = useCallback((updater: (draft: Chapter[]) => void) => {
+    const nextChapters = produce(chapters, updater);
+    commitChapters(nextChapters);
+  }, [chapters]);
+
+  const updateCurrentChapter = useCallback((updater: (blocks: ParsedBlock[]) => void) => {
+    updateChapters((draft) => {
+      if (!draft[currentChapterIndex]) return;
+      updater(draft[currentChapterIndex].blocks);
+    });
+  }, [updateChapters, currentChapterIndex]);
+
+  const updateBlock = useCallback((blockIndex: number, updater: (block: ParsedBlock) => void) => {
+    updateCurrentChapter((blocks) => {
+      if (!blocks[blockIndex]) return;
+      updater(blocks[blockIndex]);
+    });
+  }, [updateCurrentChapter]);
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value;
@@ -248,8 +279,10 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
       addToast('复制成功', 'success');
       setTimeout(() => setCopySuccess(false), 2000);
     } catch (err) {
-      console.error('复制失败:', err);
-      addToast('复制失败，请重试', 'error');
+      handleError(err, { addToast }, {
+        context: '复制失败',
+        userMessage: '复制失败，请重试',
+      });
     }
   };
 
@@ -279,25 +312,22 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
 
   const saveEditing = () => {
     if (editingBlockIndex === null) return;
-
-    const updatedChapters = getUpdatedChapters();
-    const currentChapter = updatedChapters[currentChapterIndex];
-    const block = currentChapter.blocks[editingBlockIndex];
+    let editedBlockType: ParsedBlock['type'] | null = null;
 
     // 更新块内容
-    block.content = editingContent;
-    if (block.type === 'dialogue') {
-      block.character = editingCharacter;
-      block.avatarStyle = editingAvatar;
-    } else if (block.type === 'narration' || block.type === 'narration-thought') {
-      // 更新旁白类型
-      block.type = editingNarrationType;
-    }
-
-    commitChapters(updatedChapters);
+    updateBlock(editingBlockIndex, (block) => {
+      block.content = editingContent;
+      editedBlockType = block.type;
+      if (block.type === 'dialogue') {
+        block.character = editingCharacter;
+        block.avatarStyle = editingAvatar;
+      } else if (block.type === 'narration' || block.type === 'narration-thought') {
+        block.type = editingNarrationType;
+      }
+    });
 
     // 更新头像历史记录
-    if (block.type === 'dialogue') pushAvatarHistory(editingCharacter, editingAvatar);
+    if (editedBlockType === 'dialogue') pushAvatarHistory(editingCharacter, editingAvatar);
 
     cancelEditing();
   };
@@ -309,18 +339,15 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
 
   // 删除指定的块
   const deleteBlock = (blockIndex: number) => {
-    const updatedChapters = getUpdatedChapters();
-    const currentChapter = updatedChapters[currentChapterIndex];
-
+    const block = chapters[currentChapterIndex]?.blocks[blockIndex];
+    if (!block) return;
     // 不允许删除 header 和 footer
-    const block = currentChapter.blocks[blockIndex];
     if (block.type === 'header' || block.type === 'footer') {
       return;
     }
-
-    // 删除块
-    currentChapter.blocks.splice(blockIndex, 1);
-    commitChapters(updatedChapters);
+    updateCurrentChapter((blocks) => {
+      blocks.splice(blockIndex, 1);
+    });
 
     // 如果正在编辑被删除的块，取消编辑
     if (editingBlockIndex === blockIndex) {
@@ -330,13 +357,10 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
 
   // 在指定位置插入新块
   const insertBlock = (afterIndex: number, blockType: 'narration' | 'narration-thought' | 'dialogue' | 'nested-choice-group') => {
-    const updatedChapters = getUpdatedChapters();
-    const currentChapter = updatedChapters[currentChapterIndex];
-
     const newBlock = createNewBlock(blockType);
-
-    currentChapter.blocks.splice(afterIndex + 1, 0, newBlock);
-    commitChapters(updatedChapters);
+    updateCurrentChapter((blocks) => {
+      blocks.splice(afterIndex + 1, 0, newBlock);
+    });
 
     setTimeout(() => {
       if (blockType !== 'nested-choice-group') {
@@ -345,20 +369,25 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     }, 100);
   };
 
+  const insertBlockFromMenu = useCallback((index: number, type: InsertBlockType) => {
+    insertBlock(index, type);
+    closeInsertMenu();
+  }, [insertBlock, closeInsertMenu]);
+
   const saveChoiceEditing = () => {
     if (editingChoiceBlockIndex === null) return;
-    const updatedChapters = getUpdatedChapters();
-    const block = updatedChapters[currentChapterIndex].blocks[editingChoiceBlockIndex];
-    block.choiceOptions = editingChoiceOptions.map(o => ({ ...o }));
-    commitChapters(updatedChapters);
+    updateBlock(editingChoiceBlockIndex, (block) => {
+      if (block.type !== 'choice') return;
+      block.choiceOptions = editingChoiceOptions.map(o => ({ ...o }));
+    });
     setEditingChoiceBlockIndex(null);
   };
 
   const startSubEditing = (optIdx: number, subIdx: number, sub: ParsedBlock) => {
     setEditingSubBlock({ optIdx, subIdx });
     setEditingSubContent(sub.content);
-    setEditingSubCharacter(sub.character || '');
-    setEditingSubAvatar(sub.avatarStyle || '');
+    setEditingSubCharacter(sub.type === 'dialogue' ? sub.character : '');
+    setEditingSubAvatar(sub.type === 'dialogue' ? sub.avatarStyle : '');
     setEditingSubNarrationType(sub.type === 'narration-thought' ? 'narration-thought' : 'narration');
   };
 
@@ -374,49 +403,43 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
   const saveSubEditing = (choiceBlockIdx: number) => {
     if (!editingSubBlock) return;
     const { optIdx, subIdx } = editingSubBlock;
-    const updatedChapters = getUpdatedChapters();
-    const block = updatedChapters[currentChapterIndex].blocks[choiceBlockIdx];
-    const sub = block.choiceOptions![optIdx].blocks[subIdx];
-    sub.content = editingSubContent;
-    if (sub.type === 'dialogue') {
-      sub.character = editingSubCharacter;
-      sub.avatarStyle = editingSubAvatar;
-    } else {
-      sub.type = editingSubNarrationType;
-    }
-    commitChapters(updatedChapters);
+    updateBlock(choiceBlockIdx, (block) => {
+      if (block.type !== 'choice') return;
+      const sub = block.choiceOptions[optIdx]?.blocks[subIdx];
+      if (!sub) return;
+      sub.content = editingSubContent;
+      if (sub.type === 'dialogue') {
+        sub.character = editingSubCharacter;
+        sub.avatarStyle = editingSubAvatar;
+      } else {
+        sub.type = editingSubNarrationType;
+      }
+    });
     cancelSubEditing();
   };
 
   const deleteSubBlock = (choiceBlockIdx: number, optIdx: number, subIdx: number) => {
-    const updatedChapters = getUpdatedChapters();
-    updatedChapters[currentChapterIndex].blocks[choiceBlockIdx].choiceOptions![optIdx].blocks.splice(subIdx, 1);
-    commitChapters(updatedChapters);
+    updateBlock(choiceBlockIdx, (block) => {
+      if (block.type !== 'choice') return;
+      block.choiceOptions[optIdx]?.blocks.splice(subIdx, 1);
+    });
     if (editingSubBlock?.optIdx === optIdx && editingSubBlock?.subIdx === subIdx) cancelSubEditing();
   };
 
   const insertSubBlock = (choiceBlockIdx: number, optIdx: number, afterSubIdx: number, type: 'narration' | 'narration-thought' | 'dialogue') => {
     const newSub = createNewBlock(type);
-    const updatedChapters = getUpdatedChapters();
-    updatedChapters[currentChapterIndex].blocks[choiceBlockIdx].choiceOptions![optIdx].blocks.splice(afterSubIdx + 1, 0, newSub);
-    commitChapters(updatedChapters);
+    updateBlock(choiceBlockIdx, (block) => {
+      if (block.type !== 'choice') return;
+      block.choiceOptions[optIdx]?.blocks.splice(afterSubIdx + 1, 0, newSub);
+    });
     setTimeout(() => startSubEditing(optIdx, afterSubIdx + 1, newSub), 50);
   };
 
-  const saveNestedEditing = () => {
-    if (editingNestedIndex === null) return;
-    const updatedChapters = getUpdatedChapters();
-    const block = updatedChapters[currentChapterIndex].blocks[editingNestedIndex];
-    block.nestedChoiceLabel = editingNestedLabel;
-    commitChapters(updatedChapters);
-    setEditingNestedIndex(null);
-  };
-
   const updateNestedGroup = (blockIndex: number, updater: (opts: { label: string; showIndex: number; blocks: ParsedBlock[] }[]) => { label: string; showIndex: number; blocks: ParsedBlock[] }[]) => {
-    const updatedChapters = getUpdatedChapters();
-    const block = updatedChapters[currentChapterIndex].blocks[blockIndex];
-    block.nestedOptions = updater(block.nestedOptions || []);
-    commitChapters(updatedChapters);
+    updateBlock(blockIndex, (block) => {
+      if (block.type !== 'nested-choice-group') return;
+      block.nestedOptions = updater(block.nestedOptions || []);
+    });
   };
 
   const deleteNestedOption = (blockIndex: number, showIndex: number) => {
@@ -546,28 +569,25 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
   const quickReplaceCharacterAvatar = (characterName: string, avatarName: string) => {
     if (!characterName) return;
 
-    const updatedChapters = getUpdatedChapters();
-    const currentChapter = updatedChapters[currentChapterIndex];
-
     let replacedCount = 0;
-    currentChapter.blocks.forEach(block => {
-      if (block.type === 'dialogue' && block.character === characterName) {
-        block.avatarStyle = avatarName;
-        replacedCount++;
-      }
-      if (block.type === 'nested-choice-group') {
-        (block.nestedOptions || []).forEach(opt => {
-          opt.blocks.forEach(b => {
-            if (b.type === 'dialogue' && b.character === characterName) {
-              b.avatarStyle = avatarName;
-              replacedCount++;
-            }
+    updateCurrentChapter((blocks) => {
+      blocks.forEach(block => {
+        if (block.type === 'dialogue' && block.character === characterName) {
+          block.avatarStyle = avatarName;
+          replacedCount++;
+        }
+        if (block.type === 'nested-choice-group') {
+          (block.nestedOptions || []).forEach(opt => {
+            opt.blocks.forEach(b => {
+              if (b.type === 'dialogue' && b.character === characterName) {
+                b.avatarStyle = avatarName;
+                replacedCount++;
+              }
+            });
           });
-        });
-      }
+        }
+      });
     });
-
-    commitChapters(updatedChapters);
 
     pushAvatarHistory(characterName, avatarName);
 
@@ -576,29 +596,25 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
 
   // 批量替换多个人名的头像
   const batchReplaceMultipleCharacters = (characterAvatarMap: Record<string, string>) => {
-    const updatedChapters = getUpdatedChapters();
-    const currentChapter = updatedChapters[currentChapterIndex];
-
     const replacedCounts: Record<string, number> = {};
-
-    currentChapter.blocks.forEach(block => {
-      if (block.type === 'dialogue' && block.character && characterAvatarMap[block.character]) {
-        block.avatarStyle = characterAvatarMap[block.character];
-        replacedCounts[block.character] = (replacedCounts[block.character] || 0) + 1;
-      }
-      if (block.type === 'nested-choice-group') {
-        (block.nestedOptions || []).forEach(opt => {
-          opt.blocks.forEach(b => {
-            if (b.type === 'dialogue' && b.character && characterAvatarMap[b.character]) {
-              b.avatarStyle = characterAvatarMap[b.character];
-              replacedCounts[b.character] = (replacedCounts[b.character] || 0) + 1;
-            }
+    updateCurrentChapter((blocks) => {
+      blocks.forEach(block => {
+        if (block.type === 'dialogue' && block.character && characterAvatarMap[block.character]) {
+          block.avatarStyle = characterAvatarMap[block.character];
+          replacedCounts[block.character] = (replacedCounts[block.character] || 0) + 1;
+        }
+        if (block.type === 'nested-choice-group') {
+          (block.nestedOptions || []).forEach(opt => {
+            opt.blocks.forEach(b => {
+              if (b.type === 'dialogue' && b.character && characterAvatarMap[b.character]) {
+                b.avatarStyle = characterAvatarMap[b.character];
+                replacedCounts[b.character] = (replacedCounts[b.character] || 0) + 1;
+              }
+            });
           });
-        });
-      }
+        }
+      });
     });
-
-    commitChapters(updatedChapters);
 
     Object.entries(characterAvatarMap).forEach(([name, avatar]) => {
       pushAvatarHistory(name, avatar);
@@ -624,631 +640,30 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     blockRefs
   });
 
-  const renderBlock = (block: ParsedBlock, index: number) => {
-    if (block.type === 'header' || block.type === 'footer') {
-      return null;
-    }
+  const blockRenderers = useMemo(() => ({
+    narration: (block: Extract<ParsedBlock, { type: 'narration' }>, index: number, blockKey: string) =>
+      <NarrationBlockItem key={blockKey} block={block} index={index} blockKey={blockKey} />,
+    'narration-thought': (block: Extract<ParsedBlock, { type: 'narration-thought' }>, index: number, blockKey: string) =>
+      <NarrationThoughtBlockItem key={blockKey} block={block} index={index} blockKey={blockKey} />,
+    dialogue: (block: Extract<ParsedBlock, { type: 'dialogue' }>, index: number, blockKey: string) =>
+      <DialogueBlockItem key={blockKey} block={block} index={index} blockKey={blockKey} />,
+    choice: (block: Extract<ParsedBlock, { type: 'choice' }>, index: number) =>
+      renderChoiceBlock(block, index),
+    'nested-choice-group': (block: Extract<ParsedBlock, { type: 'nested-choice-group' }>, index: number) =>
+      renderNestedChoiceGroup(block, index)
+  }), [renderChoiceBlock, renderNestedChoiceGroup]);
 
-    if (block.type === 'choice') return renderChoiceBlock(block, index);
-    if (block.type === 'nested-choice') return null;
-    if (block.type === 'nested-choice-group') return renderNestedChoiceGroup(block, index);
+  const renderBlock = useCallback((block: ParsedBlock, index: number) => {
+    if (block.type === 'header' || block.type === 'footer' || block.type === 'nested-choice') return null;
 
-    const isEditing = editingBlockIndex === index;
     const blockKey = `${currentChapterIndex}-${index}`;
+    const renderer = blockRenderers[block.type as keyof typeof blockRenderers];
+    if (!renderer) return null;
 
-    if (block.type === 'narration') {
-      return (
-        <div
-          key={index}
-          ref={(el) => blockRefs.current[blockKey] = el}
-          className={`group relative px-4 py-2.5 mb-1.5 rounded-lg text-sm leading-relaxed cursor-pointer transition-all ${isEditing ? 'ring-2 ring-indigo-500' : ''
-            }`}
-          style={{
-            backgroundColor: '#7b7b77',
-            color: '#ffffff'
-          }}
-          onClick={() => !isEditing && startEditing(index, block)}
-          onMouseEnter={(e) => {
-            if (!isEditing) {
-              e.currentTarget.style.backgroundColor = '#8a8a86';
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (!isEditing) {
-              e.currentTarget.style.backgroundColor = '#7b7b77';
-            }
-          }}
-        >
-          {isEditing ? (
-            <div onClick={(e) => e.stopPropagation()} className="space-y-2">
-              <textarea
-                value={editingContent}
-                onChange={(e) => setEditingContent(e.target.value)}
-                className="w-full min-h-[60px] px-3 py-2 border border-white rounded-lg text-sm resize-vertical text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <div className="flex gap-2">
-                <button onClick={saveEditing} className="px-4 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors">保存</button>
-                <button onClick={cancelEditing} className="px-4 py-1.5 bg-gray-500 text-white rounded-lg text-xs font-medium hover:bg-gray-600 transition-colors">取消</button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {block.content}
-              <div className="absolute right-2 top-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="relative">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const m = document.getElementById(`narr-convert-menu-${index}`);
-                      if (m) m.style.display = m.style.display === 'none' ? 'flex' : 'none';
-                    }}
-                    className="px-2 py-1 bg-amber-500 text-white rounded text-xs hover:bg-amber-600 transition-colors"
-                    title="转换类型"
-                  >⇄</button>
-                  <div
-                    id={`narr-convert-menu-${index}`}
-                    className="absolute right-0 top-7 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex-col gap-1 z-20 min-w-[120px]"
-                    style={{ display: 'none' }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button onClick={() => {
-                      const updatedChapters = [...chapters];
-                      updatedChapters[currentChapterIndex].blocks[index].type = 'narration-thought';
-                      commitChapters(updatedChapters);
-                      const m = document.getElementById(`narr-convert-menu-${index}`);
-                      if (m) m.style.display = 'none';
-                    }} className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors">心理旁白</button>
-                    <button onClick={() => {
-                      const updatedChapters = [...chapters];
-                      const b = updatedChapters[currentChapterIndex].blocks[index];
-                      b.type = 'dialogue'; b.character = characterName || '角色名'; b.avatarStyle = '';
-                      commitChapters(updatedChapters);
-                      const m = document.getElementById(`narr-convert-menu-${index}`);
-                      if (m) m.style.display = 'none';
-                    }} className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors">对话</button>
-                  </div>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const insertMenu = document.getElementById(`insert-menu-${index}`);
-                    if (insertMenu) insertMenu.style.display = insertMenu.style.display === 'none' ? 'flex' : 'none';
-                  }}
-                  className="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 transition-colors"
-                  title="插入"
-                >＋</button>
-                <button
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    const confirmed = await showConfirm({ title: '确认删除', message: '确定要删除这条旁白吗？' });
-                    if (confirmed) deleteBlock(index);
-                  }}
-                  className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors"
-                  title="删除"
-                >✕</button>
-              </div>
-              {/* 插入菜单 */}
-              <div
-                id={`insert-menu-${index}`}
-                className="absolute right-2 top-10 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex flex-col gap-1 z-10 min-w-[140px]"
-                style={{ display: 'none' }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <button
-                  onClick={() => {
-                    insertBlock(index, 'narration');
-                    const menu = document.getElementById(`insert-menu-${index}`);
-                    if (menu) menu.style.display = 'none';
-                  }}
-                  className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                >
-                  插入普通旁白
-                </button>
-                <button
-                  onClick={() => {
-                    insertBlock(index, 'narration-thought');
-                    const menu = document.getElementById(`insert-menu-${index}`);
-                    if (menu) menu.style.display = 'none';
-                  }}
-                  className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                >
-                  插入心理旁白
-                </button>
-                <button
-                  onClick={() => {
-                    insertBlock(index, 'dialogue');
-                    const menu = document.getElementById(`insert-menu-${index}`);
-                    if (menu) menu.style.display = 'none';
-                  }}
-                  className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                >
-                  插入对话
-                </button>
-                <button
-                  onClick={() => {
-                    insertBlock(index, 'nested-choice-group');
-                    const menu = document.getElementById(`insert-menu-${index}`);
-                    if (menu) menu.style.display = 'none';
-                  }}
-                  className="w-full px-3 py-2 text-xs text-left text-purple-700 hover:bg-purple-50 rounded transition-colors"
-                >
-                  插入嵌套分歧
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      );
-    }
+    return renderer(block as never, index, blockKey);
+  }, [blockRenderers, currentChapterIndex]);
 
-    if (block.type === 'narration-thought') {
-      return (
-        <div
-          key={index}
-          ref={(el) => blockRefs.current[blockKey] = el}
-          className={`group relative px-4 py-3 mb-1.5 rounded-lg text-sm leading-relaxed cursor-pointer transition-all ${isEditing ? 'ring-2 ring-indigo-500' : ''
-            }`}
-          style={{
-            backgroundColor: '#7b7b77'
-          }}
-          onClick={() => !isEditing && startEditing(index, block)}
-          onMouseEnter={(e) => {
-            if (!isEditing) {
-              e.currentTarget.style.backgroundColor = '#8a8a86';
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (!isEditing) {
-              e.currentTarget.style.backgroundColor = '#7b7b77';
-            }
-          }}
-        >
-          <div className="flex items-center mb-1.5">
-            <span className="text-base mr-1 font-bold" style={{ color: '#f8e4c2' }}>
-              ◆
-            </span>
-            <span className="font-bold text-sm" style={{ color: '#f8e4c2' }}>
-              我
-            </span>
-          </div>
-          {isEditing ? (
-            <div onClick={(e) => e.stopPropagation()} className="space-y-2">
-              <textarea
-                value={editingContent}
-                onChange={(e) => setEditingContent(e.target.value)}
-                className="w-full min-h-[60px] px-3 py-2 border border-white rounded-lg text-sm resize-vertical text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <div className="flex gap-2">
-                <button onClick={saveEditing} className="px-4 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors">保存</button>
-                <button onClick={cancelEditing} className="px-4 py-1.5 bg-gray-500 text-white rounded-lg text-xs font-medium hover:bg-gray-600 transition-colors">取消</button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="text-sm" style={{ color: '#f8e4c2' }}>
-                {block.content}
-              </div>
-              <div className="absolute right-2 top-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="relative">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const m = document.getElementById(`narr-convert-menu-${index}`);
-                      if (m) m.style.display = m.style.display === 'none' ? 'flex' : 'none';
-                    }}
-                    className="px-2 py-1 bg-amber-500 text-white rounded text-xs hover:bg-amber-600 transition-colors"
-                    title="转换类型"
-                  >⇄</button>
-                  <div
-                    id={`narr-convert-menu-${index}`}
-                    className="absolute right-0 top-7 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex-col gap-1 z-20 min-w-[120px]"
-                    style={{ display: 'none' }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button onClick={() => {
-                      const updatedChapters = [...chapters];
-                      updatedChapters[currentChapterIndex].blocks[index].type = 'narration';
-                      commitChapters(updatedChapters);
-                      const m = document.getElementById(`narr-convert-menu-${index}`);
-                      if (m) m.style.display = 'none';
-                    }} className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors">普通旁白</button>
-                    <button onClick={() => {
-                      const updatedChapters = [...chapters];
-                      const b = updatedChapters[currentChapterIndex].blocks[index];
-                      b.type = 'dialogue'; b.character = '我'; b.avatarStyle = '';
-                      commitChapters(updatedChapters);
-                      const m = document.getElementById(`narr-convert-menu-${index}`);
-                      if (m) m.style.display = 'none';
-                    }} className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors">对话</button>
-                  </div>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const insertMenu = document.getElementById(`insert-menu-${index}`);
-                    if (insertMenu) insertMenu.style.display = insertMenu.style.display === 'none' ? 'flex' : 'none';
-                  }}
-                  className="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 transition-colors"
-                  title="插入"
-                >＋</button>
-                <button
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    const confirmed = await showConfirm({ title: '确认删除', message: '确定要删除这条心理旁白吗？' });
-                    if (confirmed) deleteBlock(index);
-                  }}
-                  className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors"
-                  title="删除"
-                >✕</button>
-              </div>
-              {/* 插入菜单 */}
-              <div
-                id={`insert-menu-${index}`}
-                className="absolute right-2 top-10 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex flex-col gap-1 z-10 min-w-[140px]"
-                style={{ display: 'none' }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <button
-                  onClick={() => {
-                    insertBlock(index, 'narration');
-                    const menu = document.getElementById(`insert-menu-${index}`);
-                    if (menu) menu.style.display = 'none';
-                  }}
-                  className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                >
-                  插入普通旁白
-                </button>
-                <button
-                  onClick={() => {
-                    insertBlock(index, 'narration-thought');
-                    const menu = document.getElementById(`insert-menu-${index}`);
-                    if (menu) menu.style.display = 'none';
-                  }}
-                  className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                >
-                  插入心理旁白
-                </button>
-                <button
-                  onClick={() => {
-                    insertBlock(index, 'dialogue');
-                    const menu = document.getElementById(`insert-menu-${index}`);
-                    if (menu) menu.style.display = 'none';
-                  }}
-                  className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                >
-                  插入对话
-                </button>
-                <button
-                  onClick={() => {
-                    insertBlock(index, 'nested-choice-group');
-                    const menu = document.getElementById(`insert-menu-${index}`);
-                    if (menu) menu.style.display = 'none';
-                  }}
-                  className="w-full px-3 py-2 text-xs text-left text-purple-700 hover:bg-purple-50 rounded transition-colors"
-                >
-                  插入嵌套分歧
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      );
-    }
-
-    if (block.type === 'dialogue') {
-      const characterColor = getCharacterColor(block.character || '', block.customColor);
-      const isSelected = selectedBlockIndices.has(index);
-
-      return (
-        <div
-          key={index}
-          ref={(el) => blockRefs.current[blockKey] = el}
-          className={`group relative bg-white border px-4 py-3 mb-1.5 rounded-lg text-sm leading-relaxed flex gap-3 items-start cursor-pointer transition-all hover:shadow-md ${isEditing ? 'ring-2 ring-indigo-500' : ''
-            } ${isSelected ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}
-          style={{ borderColor: isSelected ? '#3b82f6' : characterColor }}
-          onClick={() => {
-            if (isMultiSelectMode) {
-              toggleBlockSelection(index);
-            } else if (!isEditing) {
-              startEditing(index, block);
-            }
-          }}
-        >
-          {/* 多选复选框 */}
-          {isMultiSelectMode && (
-            <div
-              className="shrink-0 flex items-center"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleBlockSelection(index);
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={isSelected}
-                onChange={() => toggleBlockSelection(index)}
-                className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
-              />
-            </div>
-          )}
-
-          {/* 头像区域 */}
-          {block.avatarStyle && !isEditing && (
-            <div className="shrink-0 w-[70px] h-[70px] overflow-hidden rounded">
-              {(() => {
-                const avatarPath = getAvatarPath(block.avatarStyle);
-                if (!avatarPath) return null;
-
-                return (
-                  <img
-                    src={avatarPath}
-                    alt={block.character}
-                    className="w-[120%] h-[120%] object-cover object-center -translate-x-[8.33%] -translate-y-[8.33%]"
-                    onError={(e) => {
-                      console.error(`头像加载失败: ${block.avatarStyle}`);
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                );
-              })()}
-            </div>
-          )}
-
-          {/* 对话内容区域 */}
-          <div className="flex-1 min-w-0">
-            {isEditing ? (
-              <div onClick={(e) => e.stopPropagation()} className="space-y-2">
-                <div>
-                  <div className="flex gap-3 items-start">
-                    {/* 左侧：头像预览 */}
-                    <div className="shrink-0">
-                      {editingAvatar ? (
-                        <div
-                          className="w-[100px] h-[100px] border-2 border-gray-300 rounded-lg overflow-hidden bg-gray-50 cursor-pointer hover:border-blue-500 transition-colors"
-                          onClick={() => setShowAvatarPicker(true)}
-                          title="点击更换头像"
-                        >
-                          {(() => {
-                            const avatarPath = getAvatarPath(editingAvatar);
-                            if (!avatarPath) {
-                              return (
-                                <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">
-                                  无效头像
-                                </div>
-                              );
-                            }
-                            return (
-                              <img
-                                src={avatarPath}
-                                alt={editingAvatar}
-                                className="w-[120%] h-[120%] object-cover object-center -translate-x-[8.33%] -translate-y-[8.33%]"
-                                onError={(e) => {
-                                  (e.target as HTMLImageElement).style.display = 'none';
-                                }}
-                              />
-                            );
-                          })()}
-                        </div>
-                      ) : (
-                        <div
-                          className="w-[100px] h-[100px] border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center bg-gray-50 cursor-pointer hover:border-blue-500 transition-colors"
-                          onClick={() => setShowAvatarPicker(true)}
-                          title="点击选择头像"
-                        >
-                          <span className="text-gray-400 text-xs text-center px-2">未选择<br />头像</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 右侧：操作按钮和输入框 */}
-                    <div className="flex-1 space-y-2">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setShowAvatarPicker(true)}
-                          className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-medium hover:bg-blue-600 transition-colors whitespace-nowrap"
-                        >
-                          选择头像
-                        </button>
-                        <button
-                          onClick={() => setEditingAvatar('')}
-                          className="px-3 py-1.5 bg-gray-500 text-white rounded-lg text-xs font-medium hover:bg-gray-600 transition-colors whitespace-nowrap"
-                        >
-                          清空头像
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        value={editingAvatar}
-                        onChange={(e) => setEditingAvatar(e.target.value)}
-                        placeholder="例如：广陵王-无语"
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      />
-                      {(() => {
-                        const history = characterAvatarHistory[editingCharacter] || [];
-                        if (history.length === 0) return null;
-                        return (
-                          <div className="flex gap-1.5 flex-wrap">
-                            {history.map((avatarName) => {
-                              const p = getAvatarPath(avatarName);
-                              if (!p) return null;
-                              const isActive = editingAvatar === avatarName;
-                              return (
-                                <div
-                                  key={avatarName}
-                                  onClick={() => setEditingAvatar(avatarName)}
-                                  title={avatarName}
-                                  className={`w-[48px] h-[48px] rounded-lg overflow-hidden cursor-pointer border-2 transition-colors ${isActive ? 'border-blue-500' : 'border-gray-300 hover:border-blue-400'}`}
-                                >
-                                  <img
-                                    src={p}
-                                    alt={avatarName}
-                                    className="w-[120%] h-[120%] object-cover object-center -translate-x-[8.33%] -translate-y-[8.33%]"
-                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="block mb-1 text-xs text-gray-600 font-medium">
-                    角色名：
-                  </label>
-                  <input
-                    type="text"
-                    value={editingCharacter}
-                    onChange={(e) => setEditingCharacter(e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1 text-xs text-gray-600 font-medium">
-                    对话内容：
-                  </label>
-                  <textarea
-                    value={editingContent}
-                    onChange={(e) => setEditingContent(e.target.value)}
-                    className="w-full min-h-[60px] px-3 py-2 border border-gray-300 rounded-lg text-sm resize-vertical focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={saveEditing}
-                    className="px-4 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors"
-                  >
-                    保存
-                  </button>
-                  <button
-                    onClick={cancelEditing}
-                    className="px-4 py-1.5 bg-gray-500 text-white rounded-lg text-xs font-medium hover:bg-gray-600 transition-colors"
-                  >
-                    取消
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center mb-1.5">
-                  <span
-                    className="text-base mr-1 font-bold"
-                    style={{ color: characterColor }}
-                  >
-                    ◆
-                  </span>
-                  <span className="font-bold text-sm" style={{ color: characterColor }}>
-                    {block.character}
-                  </span>
-                </div>
-                <div className="text-gray-700 text-sm leading-relaxed">
-                  {block.content}
-                </div>
-                <div className="absolute right-2 top-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const updatedChapters = [...chapters];
-                      const b = updatedChapters[currentChapterIndex].blocks[index];
-                      b.type = 'narration';
-                      b.character = undefined;
-                      b.avatarStyle = undefined;
-                      commitChapters(updatedChapters);
-                    }}
-                    className="px-2 py-1 bg-amber-500 text-white rounded text-xs hover:bg-amber-600 transition-colors"
-                    title="转为旁白"
-                  >⇄</button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const insertMenu = document.getElementById(`insert-menu-${index}`);
-                      if (insertMenu) {
-                        insertMenu.style.display = insertMenu.style.display === 'none' ? 'flex' : 'none';
-                      }
-                    }}
-                    className="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 transition-colors"
-                    title="插入"
-                  >
-                    ＋
-                  </button>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      const confirmed = await showConfirm({
-                        title: '确认删除',
-                        message: '确定要删除这条对话吗？'
-                      });
-                      if (confirmed) {
-                        deleteBlock(index);
-                      }
-                    }}
-                    className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors"
-                    title="删除"
-                  >
-                    ✕
-                  </button>
-                </div>
-                {/* 插入菜单 */}
-                <div
-                  id={`insert-menu-${index}`}
-                  className="absolute right-2 top-10 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex flex-col gap-1 z-10 min-w-[140px]"
-                  style={{ display: 'none' }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    onClick={() => {
-                      insertBlock(index, 'narration');
-                      const menu = document.getElementById(`insert-menu-${index}`);
-                      if (menu) menu.style.display = 'none';
-                    }}
-                    className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                  >
-                    插入普通旁白
-                  </button>
-                  <button
-                    onClick={() => {
-                      insertBlock(index, 'narration-thought');
-                      const menu = document.getElementById(`insert-menu-${index}`);
-                      if (menu) menu.style.display = 'none';
-                    }}
-                    className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                  >
-                    插入心理旁白
-                  </button>
-                  <button
-                    onClick={() => {
-                      insertBlock(index, 'dialogue');
-                      const menu = document.getElementById(`insert-menu-${index}`);
-                      if (menu) menu.style.display = 'none';
-                    }}
-                    className="w-full px-3 py-2 text-xs text-left text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                  >
-                    插入对话
-                  </button>
-                  <button
-                    onClick={() => {
-                      insertBlock(index, 'nested-choice-group');
-                      const menu = document.getElementById(`insert-menu-${index}`);
-                      if (menu) menu.style.display = 'none';
-                    }}
-                    className="w-full px-3 py-2 text-xs text-left text-purple-700 hover:bg-purple-50 rounded transition-colors"
-                  >
-                    插入嵌套分歧
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  const renderChoiceBlock = (block: ParsedBlock, index: number) => {
+  function renderChoiceBlock(block: ParsedBlock, index: number) {
     const blockKey = `${currentChapterIndex}-${index}`;
     return (
       <ChoiceBlock
@@ -1281,9 +696,10 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
         onSetEditingSubNarrationType={setEditingSubNarrationType}
         onSetShowSubAvatarPicker={setShowSubAvatarPicker}
         onUpdateChoiceOptions={(blockIndex, opts) => {
-          const updatedChapters = [...chapters];
-          updatedChapters[currentChapterIndex].blocks[blockIndex].choiceOptions = opts;
-          commitChapters(updatedChapters);
+          updateBlock(blockIndex, (block) => {
+            if (block.type !== 'choice') return;
+            block.choiceOptions = opts;
+          });
         }}
         showConfirm={showConfirm}
         extractedFrames={extractedFrames}
@@ -1296,9 +712,9 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
         onCaptureFrame={onCaptureFrame}
       />
     );
-  };
+  }
 
-  const renderNestedChoiceGroup = (block: ParsedBlock, index: number) => {
+  function renderNestedChoiceGroup(block: ParsedBlock, index: number) {
     return (
       <NestedChoiceGroup
         key={`nested-group-${index}`}
@@ -1348,10 +764,58 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
         onCaptureFrame={onCaptureFrame}
       />
     );
-  };
+  }
+
+  const blockActions = useBlockOperations({
+    blockRefs,
+    startEditing,
+    setEditingContent,
+    setEditingCharacter,
+    setEditingAvatar,
+    setShowAvatarPicker,
+    saveEditing,
+    cancelEditing,
+    toggleNarrationConvertMenu,
+    toggleInsertMenu,
+    closeInsertMenu,
+    insertBlockFromMenu,
+    toggleBlockSelection,
+    showConfirm,
+    deleteBlock,
+    updateBlock,
+    closeNarrationConvertMenu,
+    characterName
+  });
+
+  const editorBlockContextValue = useMemo<EditorBlockContextValue>(() => ({
+    editingState: {
+      blockIndex: editingBlockIndex,
+      content: editingContent,
+      character: editingCharacter,
+      avatar: editingAvatar,
+      isMultiSelectMode,
+      selectedBlockIndices
+    },
+    menuState: {
+      activeInsertMenuIndex,
+      activeNarrationConvertMenuIndex
+    },
+    resources: {
+      chapters,
+      currentChapterIndex,
+      characterName,
+      characterAvatarHistory
+    },
+    actions: blockActions
+  }), [
+    editingBlockIndex, editingContent, editingCharacter, editingAvatar, isMultiSelectMode, selectedBlockIndices,
+    activeInsertMenuIndex, activeNarrationConvertMenuIndex, chapters, currentChapterIndex, characterName,
+    characterAvatarHistory, blockActions
+  ]);
 
   return (
-    <div className="flex flex-col gap-4 h-full min-h-0">
+    <EditorBlockContext.Provider value={editorBlockContextValue}>
+      <div className="flex flex-col gap-4 h-full min-h-0">
       <EditorModals
         showSearchDialog={showSearchDialog}
         searchKeyword={searchKeyword}
@@ -1423,7 +887,7 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
       )}
 
       {/* 预览区域 */}
-      {chapters.length > 0 && (
+        {chapters.length > 0 && (
         <div className="flex-1 min-h-0 flex flex-col">
           <PreviewToolbar
             isMultiSelectMode={isMultiSelectMode}
@@ -1443,13 +907,15 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
               chapterIndex={currentChapterIndex}
               chapters={chapters}
               currentChapterIndex={currentChapterIndex}
+              scrollContainerRef={rightScrollRef}
               onChapterClick={handleChapterClick}
               renderBlock={(index) => renderBlock(chapters[currentChapterIndex].blocks[index], index)}
             />
           </div>
         </div>
-      )}
-    </div>
+        )}
+      </div>
+    </EditorBlockContext.Provider>
   );
 };
 

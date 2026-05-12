@@ -2,6 +2,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ExtractedFrame, ExtractionMode, ExtractionParams, ProgressData, ROI, VideoFile } from '../types';
 import { generateFilename, formatTimestampDisplay } from '../utils/filenameUtils';
 import { seekVideoToTime, preloadVideo } from '../utils/videoProcessingUtils';
+import { handleError } from '../utils/errorHandler';
+import { logger } from '../utils/logger';
+import {
+  DEFAULT_HARDWARE_CONCURRENCY,
+  PROCESSING_PARALLEL_MAX,
+  PROCESSING_PARALLEL_MIN,
+  PROCESSING_WEBP_QUALITY,
+  PROGRESS_UPDATE_FRAME_INTERVAL,
+  PROGRESS_UPDATE_INTERVAL_MS,
+} from '../config/constants';
 
 // ─── SRT Parser ───────────────────────────────────────────────────────────────
 
@@ -91,7 +101,10 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
   });
 
   // 动态并行数
-  const PARALLEL = Math.min(16, Math.max(8, (navigator.hardwareConcurrency ?? 4) * 2));
+  const PARALLEL = Math.min(
+    PROCESSING_PARALLEL_MAX,
+    Math.max(PROCESSING_PARALLEL_MIN, (navigator.hardwareConcurrency ?? DEFAULT_HARDWARE_CONCURRENCY) * 2)
+  );
 
   const videoRefs  = useRef<(HTMLVideoElement | null)[]>(Array(PARALLEL).fill(null));
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>(Array(PARALLEL).fill(null));
@@ -153,7 +166,7 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
               videoRefs.current.slice(0, PARALLEL).map(v => v ? preloadVideo(v) : Promise.resolve())
             );
           } catch (e) {
-            console.warn('视频预加载失败，继续处理:', e);
+            logger.warn('视频预加载失败，继续处理:', e);
           }
 
           cachedVideoSrcRef.current = currentSrc;
@@ -286,7 +299,7 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
         const t0 = Date.now();
         let processedCount     = 0;
         let lastProgressUpdate = 0;
-        const WEBP_QUALITY     = 0.82;
+        const WEBP_QUALITY     = PROCESSING_WEBP_QUALITY;
         const modeLabel        = useWebCodecs ? 'WebCodecs' : 'Canvas';
 
         const updateProgress = (processed: number, now: number) => {
@@ -339,7 +352,11 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
               });
               processedCount++;
               const now = Date.now();
-              if (processedCount % 50 === 0 || processedCount === totalFrames || now - lastProgressUpdate > 500) {
+              if (
+                processedCount % PROGRESS_UPDATE_FRAME_INTERVAL === 0 ||
+                processedCount === totalFrames ||
+                now - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL_MS
+              ) {
                 lastProgressUpdate = now;
                 updateProgress(processedCount, now);
               }
@@ -366,7 +383,11 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
             });
             processedCount++;
             const now = Date.now();
-            if (processedCount % 50 === 0 || processedCount === totalFrames || now - lastProgressUpdate > 500) {
+            if (
+              processedCount % PROGRESS_UPDATE_FRAME_INTERVAL === 0 ||
+              processedCount === totalFrames ||
+              now - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL_MS
+            ) {
               lastProgressUpdate = now;
               updateProgress(processedCount, now);
             }
@@ -386,7 +407,7 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
 
       } catch (err: any) {
         if (signal.aborted) return;
-        console.error(err);
+        handleError(err, undefined, { context: 'ProcessingView failed' });
         setProgress(p => ({ ...p, status: 'error', message: err.message || '未知错误' }));
       }
     };

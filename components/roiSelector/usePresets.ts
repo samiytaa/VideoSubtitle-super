@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { RoiPreset } from '../../types';
 import { useNotifier } from '../Notifications';
 import { DEFAULT_PRESETS, STORAGE_KEY } from './roiSelectorUtils';
+import { handleError } from '../../utils/errorHandler';
 
 export function usePresets() {
   const notifier = useNotifier();
@@ -14,7 +15,10 @@ export function usePresets() {
         return { ...DEFAULT_PRESETS, ...parsed };
       }
     } catch (e) {
-      console.error('Failed to parse presets', e);
+      handleError(e, notifier, {
+        context: 'Failed to parse presets',
+        userMessage: '预设解析失败，已回退默认预设。',
+      });
     }
     return DEFAULT_PRESETS;
   });

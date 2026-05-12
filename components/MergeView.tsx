@@ -4,6 +4,8 @@ import { Download, Trash2, Maximize2, Layers } from 'lucide-react';
 import { MergedImage } from '../types';
 import { downloadAsZip, downloadFile, formatFileSize, estimateImageSize } from '../utils/imageUtils';
 import { useNotifier } from './Notifications';
+import { handleError } from '../utils/errorHandler';
+import { confirmDelete } from '../utils/confirmActions';
 
 interface MergeViewProps {
   mergedImages: MergedImage[];
@@ -32,8 +34,10 @@ const MergeView: React.FC<MergeViewProps> = ({ mergedImages: initialImages = [],
       await downloadAsZip(imagesToDownload, `拼接结果_${new Date().getTime()}.zip`);
       notifier.addToast(`成功下载 ${mergedImages.length} 张拼接图片`, 'success');
     } catch (error) {
-      console.error('Download failed:', error);
-      notifier.addToast('下载失败，请重试', 'error');
+      handleError(error, notifier, {
+        context: 'Download failed',
+        userMessage: '下载失败，请重试',
+      });
     } finally {
       setIsDownloading(false);
     }
@@ -47,10 +51,7 @@ const MergeView: React.FC<MergeViewProps> = ({ mergedImages: initialImages = [],
   const handleClearAll = async () => {
     if (mergedImages.length === 0) return;
 
-    const confirmed = await notifier.showConfirm({
-      title: '确认清空',
-      message: `确定要清空所有 ${mergedImages.length} 张拼接图片吗？`
-    });
+    const confirmed = await confirmDelete(mergedImages.length, '拼接', notifier);
 
     if (confirmed) {
       setMergedImages([]);

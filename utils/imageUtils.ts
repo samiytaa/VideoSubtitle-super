@@ -1,4 +1,6 @@
 // 图片处理工具函数
+import { handleError } from './errorHandler';
+import { ZIP_DOWNLOAD_BATCH_SIZE } from '../config/constants';
 
 /**
  * 下载单个文件
@@ -20,7 +22,7 @@ export const downloadAsZip = async (images: Array<{ url: string; filename: strin
   const JSZip = (await import('jszip')).default;
   
   const zip = new JSZip();
-  const batchSize = 50;
+  const batchSize = ZIP_DOWNLOAD_BATCH_SIZE;
   const totalBatches = Math.ceil(images.length / batchSize);
   
   // 按每50张分组，放入子文件夹
@@ -35,7 +37,7 @@ export const downloadAsZip = async (images: Array<{ url: string; filename: strin
       const filePath = folderName ? `${folderName}/${image.filename}` : image.filename;
       zip.file(filePath, base64Data, { base64: true });
     } catch (error) {
-      console.error(`Failed to add ${image.filename} to zip:`, error);
+      handleError(error, undefined, { context: `Failed to add ${image.filename} to zip` });
     }
   }
   

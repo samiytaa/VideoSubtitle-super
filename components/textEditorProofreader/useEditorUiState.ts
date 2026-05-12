@@ -1,5 +1,5 @@
 import { useReducer } from 'react';
-import { ModalKey, NarrationType, ParsedBlock, SearchResult } from './types';
+import { isDialogueBlock, ModalKey, NarrationType, ParsedBlock, SearchResult } from './types';
 
 interface EditorUiState {
   editingBlockIndex: number | null;
@@ -83,8 +83,8 @@ const editorUiReducer = (state: EditorUiState, action: EditorUiAction): EditorUi
         ...state,
         editingBlockIndex: action.payload.blockIndex,
         editingContent: action.payload.block.content,
-        editingCharacter: action.payload.block.character || '',
-        editingAvatar: action.payload.block.avatarStyle || '',
+        editingCharacter: isDialogueBlock(action.payload.block) ? action.payload.block.character : '',
+        editingAvatar: isDialogueBlock(action.payload.block) ? action.payload.block.avatarStyle : '',
         editingNarrationType: action.payload.block.type === 'narration-thought' ? 'narration-thought' : 'narration'
       };
     case 'cancelBlockEdit':

@@ -38,13 +38,15 @@ interface AlertOptions {
   onClose: () => void;
 }
 
-interface NotificationContextType {
+export interface NotificationContextType {
   addToast: (message: string, type?: ToastType) => void;
   showConfirm: (options: Omit<ConfirmOptions, 'onConfirm' | 'onCancel'>) => Promise<boolean>;
   showChoice: (options: Omit<ChoiceOptions, 'onChoice'>) => Promise<string>;
   showPrompt: (options: Omit<PromptOptions, 'onSubmit' | 'onCancel'>) => Promise<string | null>;
   showAlert: (message: string, title?: string) => Promise<void>;
 }
+
+export type Notifier = NotificationContextType;
 
 // Context
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);

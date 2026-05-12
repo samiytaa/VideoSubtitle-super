@@ -2,6 +2,7 @@
  * 视频处理优化工具
  * 提供高性能的视频帧截取功能，不受浏览器标签页活跃状态影响
  */
+import { DEFAULT_MERGE_BATCH_SIZE } from '../config/constants';
 
 /**
  * 优化的视频定位函数
@@ -149,7 +150,7 @@ export const createOptimizedCanvas = (
 export const processBatchWithYield = async <T>(
   items: T[],
   processor: (item: T, index: number) => Promise<void>,
-  batchSize: number = 10,
+  batchSize: number = DEFAULT_MERGE_BATCH_SIZE,
   onBatchComplete?: (processed: number, total: number) => void
 ): Promise<void> => {
   const total = items.length;
