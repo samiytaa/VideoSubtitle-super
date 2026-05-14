@@ -3,6 +3,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Copy, Eye, EyeOff, ImageUp, Loa
 import { MergedImage } from '../types';
 import OcrDebugRunsPanel, { OcrDebugRun } from './baimiao/OcrDebugRunsPanel';
 import OcrResultPanel from './baimiao/OcrResultPanel';
+import { resolveBackendUrl } from '../utils/runtimeConfig';
 
 type BaimiaoAccount = {
   id: string;
@@ -19,12 +20,6 @@ type BaimiaoSummary = {
     username?: string;
     password?: string;
   } | null;
-};
-
-const resolveBackendUrl = (path: string) => {
-  if (!path.startsWith('/')) return path;
-  if (window.location.protocol === 'file:') return `http://127.0.0.1:3000${path}`;
-  return path;
 };
 
 const BaimiaoOcrTab: React.FC<{ mergedImages?: MergedImage[]; onOneClickRecognize?: () => void }> = () => {

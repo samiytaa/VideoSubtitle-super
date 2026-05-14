@@ -16,6 +16,7 @@ import { useFrameManagement, useVideoProcessing, useDeduplication } from './hook
 import { handleError } from './utils/errorHandler';
 import { DEFAULT_MERGE_BATCH_SIZE } from './config/constants';
 import { confirmDelete } from './utils/confirmActions';
+import { getCurrentRoutePath, syncHashRoute } from './utils/runtimeConfig';
 
 type Tab = AppTab;
 type PendingDeduplication = {
@@ -50,10 +51,10 @@ const PATH_TO_TAB: Record<string, Tab> = Object.entries(TAB_TO_PATH).reduce(
 );
 PATH_TO_TAB['/ocr'] = 'aichat';
 
-const getTabFromLocation = (): Tab => {
-  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
-  return PATH_TO_TAB[pathname] ?? 'extract';
-};
+const KNOWN_ROUTE_PATHS = Object.values(TAB_TO_PATH);
+
+const getTabFromLocation = (): Tab =>
+  PATH_TO_TAB[getCurrentRoutePath(KNOWN_ROUTE_PATHS)] ?? 'extract';
 
 const appReducer = (state: AppState, action: AppAction): AppState => {
   switch (action.type) {
@@ -104,20 +105,24 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     dispatch({ type: 'SET_ACTIVE_TAB', payload: getTabFromLocation() });
 
-    const handlePopState = () => {
+    const handleRouteChange = () => {
       const nextTab = getTabFromLocation();
       dispatch({ type: 'SET_ACTIVE_TAB', payload: nextTab });
     };
 
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('hashchange', handleRouteChange);
+    window.addEventListener('popstate', handleRouteChange);
+    return () => {
+      window.removeEventListener('hashchange', handleRouteChange);
+      window.removeEventListener('popstate', handleRouteChange);
+    };
   }, []);
 
   useEffect(() => {
     const targetPath = TAB_TO_PATH[activeTab];
-    const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+    const currentPath = getCurrentRoutePath(KNOWN_ROUTE_PATHS);
     if (currentPath !== targetPath) {
-      window.history.pushState(null, '', targetPath);
+      syncHashRoute(targetPath);
     }
   }, [activeTab]);
 

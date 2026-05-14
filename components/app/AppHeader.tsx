@@ -39,10 +39,10 @@ const AppHeader: React.FC<AppHeaderProps> = ({ activeTab, isProcessing, onChange
           <nav className="flex space-x-1">
             {renderTabButton('extract', '字幕截取', <ImageIcon className="w-4 h-4" />)}
             {renderTabButton('gallery', '查看图片', <LayoutGrid className="w-4 h-4" />)}
+            {renderTabButton('aichat', 'AI处理', <MessageCircle className="w-4 h-4" />)}
             {renderTabButton('proofread', '文本转换', <FileCheck className="w-4 h-4" />)}
             {renderTabButton('proofread2', '文本校对', <FileCheck className="w-4 h-4" />)}
             {renderTabButton('baimiao', '白描ocr', <ScanText className="w-4 h-4" />)}
-            {renderTabButton('aichat', 'ai对话', <MessageCircle className="w-4 h-4" />)}
           </nav>
         </div>
       </div>
