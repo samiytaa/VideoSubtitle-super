@@ -7,65 +7,118 @@ import { DEFAULT_MERGE_BATCH_SIZE } from '../config/constants';
 /**
  * 优化的视频定位函数
  * 使用更可靠的策略来定位视频到指定时间点
+ * 返回实际定位到的精确时间
  */
 export const seekVideoToTime = (
   video: HTMLVideoElement,
   targetTime: number,
   timeout: number = 500
-): Promise<void> => {
+): Promise<number> => {
   return new Promise((resolve, reject) => {
     if (!video) {
       reject(new Error('视频元素不存在'));
       return;
     }
 
-    // 如果已经在目标时间点附近（误差小于0.05秒），直接返回，无需 seek
-    if (Math.abs(video.currentTime - targetTime) < 0.05) {
-      resolve();
+    const duration = Number.isFinite(video.duration) ? video.duration : targetTime;
+    const epsilon = 1 / 240;
+    const maxTime = Math.max(0, duration - epsilon);
+    const clampedTarget = Math.max(0, Math.min(targetTime, maxTime));
+    const tolerance = 0.005; // 降低容差到5ms，提高精度
+
+    // 如果已经在目标时间点附近（误差小于5ms），直接返回
+    if (Math.abs(video.currentTime - clampedTarget) < tolerance) {
+      resolve(video.currentTime);
       return;
     }
 
     let resolved = false;
-    const timeoutId = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        cleanup();
-        // 超时后仍然resolve，允许继续处理
-        resolve();
-      }
-    }, timeout);
+    let seekAttempts = 0;
+    const maxSeekAttempts = 3;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    const onSeeked = () => {
-      if (!resolved) {
-        resolved = true;
-        cleanup();
-        resolve();
+    const finish = (finalTime: number) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(finalTime);
+    };
+
+    const scheduleTimeout = (ms: number) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        if (resolved) return;
+        // 超时后返回当前时间
+        finish(video.currentTime);
+      }, ms);
+    };
+
+    const performSeek = () => {
+      try {
+        seekAttempts++;
+        // 优先使用fastSeek（更快但可能不够精确）
+        if (seekAttempts === 1 && typeof (video as any).fastSeek === 'function') {
+          (video as any).fastSeek(clampedTarget);
+        } else {
+          // 后续尝试使用精确seek
+          video.currentTime = clampedTarget;
+        }
+      } catch (e) {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          reject(e);
+        }
       }
     };
 
-    const onError = (e: Event) => {
-      if (!resolved) {
-        resolved = true;
-        cleanup();
-        reject(new Error('视频定位失败'));
+    const onSeeked = () => {
+      if (resolved) return;
+      
+      const currentDiff = Math.abs(video.currentTime - clampedTarget);
+      
+      // 如果精度足够，直接完成
+      if (currentDiff < tolerance) {
+        finish(video.currentTime);
+        return;
       }
+      
+      // 如果还有重试机会且精度不够，再次尝试
+      if (seekAttempts < maxSeekAttempts) {
+        performSeek();
+        return;
+      }
+      
+      // 达到最大尝试次数，返回当前最接近的时间
+      finish(video.currentTime);
+    };
+
+    const onError = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      reject(new Error('视频定位失败'));
+    };
+
+    const onReady = () => {
+      if (video.readyState < 1) return;
+      performSeek();
     };
 
     const cleanup = () => {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('loadedmetadata', onReady);
       video.removeEventListener('error', onError);
     };
 
-    video.addEventListener('seeked', onSeeked, { once: true });
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('loadedmetadata', onReady, { once: true });
     video.addEventListener('error', onError, { once: true });
+    scheduleTimeout(timeout);
 
-    // 设置视频时间
-    try {
-      video.currentTime = targetTime;
-    } catch (e) {
-      cleanup();
-      reject(e);
+    if (video.readyState >= 1) {
+      onReady();
     }
   });
 };

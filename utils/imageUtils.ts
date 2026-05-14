@@ -138,14 +138,17 @@ export const batchMergeImages = async (
     alignment?: 'left' | 'center' | 'right';
     backgroundColor?: string;
     gap?: number;
-  }
+  },
+  onProgress?: (progress: { completed: number; total: number }) => void,
 ): Promise<string[]> => {
   const results: string[] = [];
+  const total = Math.ceil(imageUrls.length / batchSize);
   
   for (let i = 0; i < imageUrls.length; i += batchSize) {
     const batch = imageUrls.slice(i, i + batchSize);
     const merged = await mergeImagesVertically(batch, options);
     results.push(merged);
+    onProgress?.({ completed: results.length, total });
   }
   
   return results;

@@ -231,7 +231,7 @@ const AppContent: React.FC = () => {
 
     if (captureType === 'both') {
       notifier.addToast(
-        `开始一键处理：先对话，再地点${useSrt ? '' : '（固定帧间隔）'}`,
+        `一键处理：先对话，再地点${useSrt ? '' : '（固定帧间隔）'}`,
         'info'
       );
 
@@ -292,7 +292,7 @@ const AppContent: React.FC = () => {
       );
       frameManagement.setExtractedFrames([]);
       notifier.addToast(
-        `已开始一键处理${captureType === 'dialogue' ? '对话' : '地点'}截图${useSrt ? '' : '（固定帧间隔）'}`,
+        `已一键处理${captureType === 'dialogue' ? '对话' : '地点'}截图${useSrt ? '' : '（固定帧间隔）'}`,
         'success'
       );
     }
@@ -420,6 +420,13 @@ const AppContent: React.FC = () => {
     [notifier]
   );
 
+  // 一键拼接状态
+  const [oneClickProgress, setOneClickProgress] = React.useState<{
+    isLoading: boolean;
+    progress: number;
+    message: string;
+  }>({ isLoading: false, progress: 0, message: '' });
+
   // 一键识别
   const handleOneClickRecognize = useCallback(async () => {
     if (frameManagement.extractedFrames.length === 0) return;
@@ -430,7 +437,6 @@ const AppContent: React.FC = () => {
         message: `当前已有 ${frameManagement.mergedImages.length} 张拼接图片，请选择操作方式。`,
         buttons: [
           { label: '移除后拼接', value: 'remove', variant: 'danger' },
-          { label: '不移除继续拼接', value: 'keep', variant: 'primary' },
           { label: '取消拼接', value: 'cancel', variant: 'default' },
         ],
       });
@@ -438,20 +444,41 @@ const AppContent: React.FC = () => {
       if (choice === 'remove') frameManagement.setMergedImages([]);
     }
 
+    setOneClickProgress({ isLoading: true, progress: 0, message: '正在合并分组...' });
+
     const mergedFrames = frameManagement.extractedFrames.map((frame) =>
       frame.group === 'group2' ? { ...frame, group: 'group1' as const } : frame
     );
 
     frameManagement.setExtractedFrames(mergedFrames);
+    setOneClickProgress({ isLoading: true, progress: 0, message: '正在拼接图片 0/0...' });
 
     const newMergedImages = await frameManagement.mergeFramesToImages(
       mergedFrames,
-      DEFAULT_MERGE_BATCH_SIZE
+      DEFAULT_MERGE_BATCH_SIZE,
+      ({ completed, total }) => {
+        const progress = total > 0 ? Math.floor((completed / total) * 100) : 0;
+        setOneClickProgress({
+          isLoading: true,
+          progress,
+          message: `正在拼接图片 ${completed}/${total}...`,
+        });
+      },
     );
-    if (newMergedImages.length === 0) return;
+    
+    if (newMergedImages.length === 0) {
+      setOneClickProgress({ isLoading: false, progress: 0, message: '' });
+      return;
+    }
 
     frameManagement.setMergedImages((prev) => [...prev, ...newMergedImages]);
-    notifier.addToast('已完成一键识别：先合并分组，再按默认参数完成图片拼接', 'success');
+    setOneClickProgress({ isLoading: true, progress: 100, message: '完成！' });
+    
+    setTimeout(() => {
+      setOneClickProgress({ isLoading: false, progress: 0, message: '' });
+    }, 500);
+    
+    notifier.addToast('已完成一键拼接：先合并分组，再按默认参数完成图片拼接', 'success');
   }, [frameManagement, notifier]);
 
   // 清空所有数据
@@ -556,6 +583,7 @@ const AppContent: React.FC = () => {
           activeTab={activeTab}
           isProcessing={videoProcessing.isProcessing}
           onChangeTab={(tab) => dispatch({ type: 'SET_ACTIVE_TAB', payload: tab })}
+          isAiChatProcessing={oneClickProgress.isLoading}
         />
 
         <main
@@ -640,12 +668,13 @@ const AppContent: React.FC = () => {
             />
           )}
 
-          {activeTab === 'aichat' && (
+          <div className={activeTab === 'aichat' ? '' : 'hidden'}>
             <AiChatTab
               mergedImages={frameManagement.mergedImages}
               onOneClickRecognize={handleOneClickRecognize}
+              oneClickProgress={oneClickProgress}
             />
-          )}
+          </div>
         </main>
       </div>
     </>

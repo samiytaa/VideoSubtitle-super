@@ -21,6 +21,12 @@ type BaimiaoSummary = {
   } | null;
 };
 
+const resolveBackendUrl = (path: string) => {
+  if (!path.startsWith('/')) return path;
+  if (window.location.protocol === 'file:') return `http://127.0.0.1:3000${path}`;
+  return path;
+};
+
 const BaimiaoOcrTab: React.FC<{ mergedImages?: MergedImage[]; onOneClickRecognize?: () => void }> = () => {
   const RESULT_STORAGE_KEY = 'baimiao_debug_result';
   const [baimiao, setBaimiao] = useState<BaimiaoSummary>({
@@ -50,7 +56,7 @@ const BaimiaoOcrTab: React.FC<{ mergedImages?: MergedImage[]; onOneClickRecogniz
   const [showConfigModal, setShowConfigModal] = useState(false);
 
   const requestJson = useCallback(async (url: string, options: RequestInit = {}) => {
-    const response = await fetch(url, options);
+    const response = await fetch(resolveBackendUrl(url), options);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error((payload as any).error || `Request failed: ${response.status}`);

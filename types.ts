@@ -70,6 +70,9 @@ export interface ExtractedFrame {
   filename: string;
   videoName: string;
   group?: 'group1' | 'group2'; // 分组标识：group1=【对话】, group2=【地点】
+  requestedTime?: number; // 计划截图时间（秒）
+  capturedTime?: number; // 实际落点时间（秒）
+  driftMs?: number; // 实际落点与计划时间偏差（毫秒）
 }
 
 export interface MergedImage {

@@ -7,17 +7,18 @@ type AppHeaderProps = {
   activeTab: AppTab;
   isProcessing: boolean;
   onChangeTab: (tab: AppTab) => void;
+  isAiChatProcessing?: boolean;
 };
 
-const AppHeader: React.FC<AppHeaderProps> = ({ activeTab, isProcessing, onChangeTab }) => {
+const AppHeader: React.FC<AppHeaderProps> = ({ activeTab, isProcessing, onChangeTab, isAiChatProcessing = false }) => {
   const renderTabButton = (tab: AppTab, label: string, icon: React.ReactNode) => {
-    const disabled = isProcessing && tab !== 'extract';
+    const disabled = (isProcessing && tab !== 'extract') || isAiChatProcessing;
     return (
       <button
         onClick={() => !disabled && onChangeTab(tab)}
         disabled={disabled}
         title={disabled ? '处理中，请等待完成后再切换' : undefined}
-        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${activeTab === tab ? 'bg-indigo-50 text-indigo-700' : isProcessing ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
+        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${activeTab === tab ? 'bg-indigo-50 text-indigo-700' : isProcessing || isAiChatProcessing ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
       >
         <span className="flex items-center gap-1.5">{icon} {label}</span>
       </button>

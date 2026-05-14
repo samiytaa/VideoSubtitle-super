@@ -7,7 +7,7 @@ import {
   saveMergedImages,
 } from '../utils/storageUtils';
 import { batchMergeImages } from '../utils/imageUtils';
-import { parseTimestampFilename } from '../utils/filenameUtils';
+import { parseTimestampFilename, updateFilenameGroup } from '../utils/filenameUtils';
 import { Notifier } from '../components/Notifications';
 import { handleError } from '../utils/errorHandler';
 import { logger } from '../utils/logger';
@@ -118,6 +118,7 @@ export const useFrameManagement = (notifier: Notifier) => {
             return {
               ...frame,
               group: targetGroup,
+              filename: updateFilenameGroup(frame.filename, targetGroup),
             };
           }
           return frame;
@@ -128,7 +129,11 @@ export const useFrameManagement = (notifier: Notifier) => {
   );
 
   const mergeFramesToImages = useCallback(
-    async (selectedFrames: ExtractedFrame[], batchSize: number = DEFAULT_MERGE_BATCH_SIZE) => {
+    async (
+      selectedFrames: ExtractedFrame[],
+      batchSize: number = DEFAULT_MERGE_BATCH_SIZE,
+      onProgress?: (progress: { completed: number; total: number }) => void,
+    ) => {
       if (selectedFrames.length === 0) return [] as MergedImage[];
 
       try {
@@ -150,11 +155,16 @@ export const useFrameManagement = (notifier: Notifier) => {
         });
 
         const imageUrls = sortedFrames.map((frame) => frame.url);
-        const mergedUrls = await batchMergeImages(imageUrls, batchSize, {
-          alignment: 'center',
-          backgroundColor: '#000000',
-          gap: 0,
-        });
+        const mergedUrls = await batchMergeImages(
+          imageUrls,
+          batchSize,
+          {
+            alignment: 'center',
+            backgroundColor: '#000000',
+            gap: 0,
+          },
+          onProgress,
+        );
 
         const timestamp = new Date().getTime();
         const newMergedImages: MergedImage[] = mergedUrls.map((url, index) => ({

@@ -12,14 +12,24 @@ function startWeb2ApiServer() {
   web2apiProcess = spawn(process.execPath, [serverPath], {
     cwd: web2apiDir,
     windowsHide: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
       VITE_DEV: '0',
       PORT: process.env.PORT || '3000'
     }
   });
 
+  web2apiProcess.stdout?.on('data', (chunk) => {
+    console.log(`[web2api] ${String(chunk).trim()}`);
+  });
+  web2apiProcess.stderr?.on('data', (chunk) => {
+    console.error(`[web2api:error] ${String(chunk).trim()}`);
+  });
+  web2apiProcess.on('error', (error) => {
+    console.error('[web2api] failed to start:', error);
+  });
   web2apiProcess.on('exit', () => {
     web2apiProcess = null;
   });

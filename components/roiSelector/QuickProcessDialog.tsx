@@ -424,7 +424,7 @@ const QuickProcessDialog: React.FC<QuickProcessDialogProps> = ({
               (captureType === 'both' && (dialoguePresets.length === 0 || locationPresets.length === 0))
             }
           >
-            {isProcessing ? '处理中...' : '开始一键处理'}
+            {isProcessing ? '处理中...' : '一键处理'}
           </button>
         </div>
       </div>

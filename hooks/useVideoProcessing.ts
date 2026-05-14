@@ -51,6 +51,7 @@ export const useVideoProcessing = () => {
   const [processingKey, setProcessingKey] = useState(0);
   const [nextStepInfo, setNextStepInfo] = useState<NextStepInfo | null>(null);
   const nextStepInfoRef = useRef<NextStepInfo | null>(null);
+  const processingGroupRef = useRef<'group1' | 'group2' | undefined>(params.selectedGroup);
 
   const handleRoiSet = useCallback(
     (
@@ -73,6 +74,7 @@ export const useVideoProcessing = () => {
 
   const handleParamsSet = useCallback(
     (newParams: ExtractionParams, appendMode: boolean = false) => {
+      processingGroupRef.current = newParams.selectedGroup;
       setParams(newParams);
       setIsProcessing(true);
       setIsCompleted(false);
@@ -91,18 +93,19 @@ export const useVideoProcessing = () => {
   const handleProcessingProgress = useCallback(
     (progress: { current: number; total: number; message: string }) => {
       let enhancedMessage = progress.message;
-      if (params.selectedGroup === 'group1') {
+      const activeGroup = processingGroupRef.current;
+      if (activeGroup === 'group1') {
         enhancedMessage = progress.message.includes('对话')
           ? progress.message
           : `截取对话 - ${progress.message}`;
-      } else if (params.selectedGroup === 'group2') {
+      } else if (activeGroup === 'group2') {
         enhancedMessage = progress.message.includes('地点')
           ? progress.message
           : `截取地点 - ${progress.message}`;
       }
       setProcessingProgress({ ...progress, message: enhancedMessage, stage: 'extracting' });
     },
-    [params.selectedGroup]
+    []
   );
 
   const updateProcessingProgress = useCallback((progress: ProcessingProgress) => {

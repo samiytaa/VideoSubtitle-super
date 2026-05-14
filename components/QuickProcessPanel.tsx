@@ -439,7 +439,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
             className="px-5 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 shadow-sm shadow-indigo-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Scan className="w-4 h-4" />
-            {isProcessing ? '处理中…' : '开始一键处理'}
+            {isProcessing ? '处理中…' : '一键处理'}
           </button>
         </div>
       </div>
