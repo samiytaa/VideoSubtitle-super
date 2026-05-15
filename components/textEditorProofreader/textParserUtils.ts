@@ -1,4 +1,5 @@
 import { ParsedBlock, Chapter } from './types';
+import { normalizeAvatarName } from '../../utils/avatarMap';
 
 export const parseSingleBlock = (line: string): ParsedBlock | null => {
   const m = line.match(/^\{\{([^|]+)\|(.+)\}\}$/s);
@@ -12,7 +13,7 @@ export const parseSingleBlock = (line: string): ParsedBlock | null => {
   if (type === '对话') {
     let avatarStyle = '', customColor = '';
     for (let i = 2; i < parts.length; i++) {
-      if (parts[i].startsWith('头像=')) avatarStyle = parts[i].replace('头像=', '');
+      if (parts[i].startsWith('头像=')) avatarStyle = normalizeAvatarName(parts[i].replace('头像=', ''));
       else if (parts[i].startsWith('color=')) customColor = parts[i].replace('color=', '');
     }
     return { type: 'dialogue', character: parts[0], content: parts[1], avatarStyle, customColor };
@@ -39,6 +40,16 @@ export const parseChoiceBlock = (raw: string): ParsedBlock => {
   return { type: 'choice', content: '', choiceOptions: options };
 };
 
+const tokenizeTemplateText = (text: string): string[] => {
+  const tokens: string[] = [];
+  const tokenRegex = /\{\{[\s\S]*?\}\}|__CHOICE_\d+__/g;
+  let m: RegExpExecArray | null;
+  while ((m = tokenRegex.exec(text)) !== null) {
+    tokens.push(m[0]);
+  }
+  return tokens;
+};
+
 export const parseSectionBlocks = (section: string): ParsedBlock[] => {
   const choiceMap = new Map<string, ParsedBlock>();
   let idx = 0;
@@ -49,12 +60,7 @@ export const parseSectionBlocks = (section: string): ParsedBlock[] => {
     return key;
   });
 
-  const tokens: string[] = [];
-  const tokenRegex = /\{\{[\s\S]*?\}\}|__CHOICE_\d+__/g;
-  let m: RegExpExecArray | null;
-  while ((m = tokenRegex.exec(processed)) !== null) {
-    tokens.push(m[0]);
-  }
+  const tokens = tokenizeTemplateText(processed);
 
   const parseSingleToken = (t: string): ParsedBlock | null => {
     if (choiceMap.has(t)) return choiceMap.get(t)!;
@@ -69,7 +75,7 @@ export const parseSectionBlocks = (section: string): ParsedBlock[] => {
     if (type === '对话') {
       let avatarStyle = '', customColor = '';
       for (let i = 2; i < parts.length; i++) {
-        if (parts[i].startsWith('头像=')) avatarStyle = parts[i].replace('头像=', '');
+        if (parts[i].startsWith('头像=')) avatarStyle = normalizeAvatarName(parts[i].replace('头像=', ''));
         else if (parts[i].startsWith('color=')) customColor = parts[i].replace('color=', '');
       }
       return { type: 'dialogue', character: parts[0], content: parts[1], avatarStyle, customColor };
@@ -134,6 +140,59 @@ export const parseSectionBlocks = (section: string): ParsedBlock[] => {
   return blocks;
 };
 
+const serializeBlock = (block: ParsedBlock): string => {
+  if (block.type === 'narration') return `{{旁白|${block.content}}}`;
+  if (block.type === 'narration-thought') return `{{旁白|心理|${block.content}}}`;
+  if (block.type === 'dialogue') {
+    let s = `{{对话|${block.character}|${block.content}`;
+    if (block.avatarStyle) s += `|头像=${normalizeAvatarName(block.avatarStyle)}`;
+    return s + '}}';
+  }
+  if (block.type === 'choice') {
+    const parts: string[] = [];
+    (block.choiceOptions || []).forEach(opt => {
+      parts.push(`|${opt.label}`);
+      parts.push(`|${opt.blocks.map(serializeBlock).join('')}`);
+    });
+    return `{{分歧\n${parts.join('\n')}\n}}`;
+  }
+  if (block.type === 'nested-choice-group') {
+    const opts = block.nestedOptions || [];
+    const optDefs = opts.map(o => `{{嵌套分歧|${o.label}|${o.showIndex}}}`).join('');
+    const contentSections = opts.map((o, oi) => {
+      const inner = o.blocks.map(serializeBlock).join('');
+      const head = oi === 0 ? `{{嵌套分歧|内容头|显示=${o.showIndex}}}` : `{{嵌套分歧|内容头}}`;
+      return `${head}${inner}{{嵌套分歧|内容尾}}`;
+    }).join('');
+    return `{{嵌套分歧|头}}${optDefs}{{嵌套分歧|尾}}${contentSections}`;
+  }
+  return '';
+};
+
+export const serializeBlocksText = (blocks: ParsedBlock[]): string =>
+  blocks
+    .filter(block => block.type !== 'header' && block.type !== 'footer' && block.type !== 'nested-choice')
+    .map(serializeBlock)
+    .join('\n');
+
+export const parseEditableBlocksText = (text: string): { blocks: ParsedBlock[]; error?: string } => {
+  const trimmed = text.trim();
+  if (!trimmed) return { blocks: [] };
+
+  const processed = trimmed.replace(/\{\{分歧\n[\s\S]*?\n\}\}/g, (match) => match);
+  const residue = processed.replace(/\{\{[\s\S]*?\}\}/g, '').trim();
+  if (residue) {
+    return { blocks: [], error: '存在无法识别的原文内容，请确认使用 {{旁白}} / {{对话}} / {{分歧}} 模板格式。' };
+  }
+
+  const blocks = parseSectionBlocks(trimmed).filter(block => block.type !== 'header' && block.type !== 'footer' && block.type !== 'nested-choice');
+  const tokenCount = tokenizeTemplateText(trimmed).length;
+  if (tokenCount > 0 && blocks.length === 0) {
+    return { blocks: [], error: '原文格式无法解析，请检查模板是否完整闭合。' };
+  }
+  return { blocks };
+};
+
 export const parseText = (text: string): Chapter[] => {
   if (text.includes('{{对话-头}}') && text.includes('{{对话-尾}}')) {
     const inner = text
@@ -185,7 +244,7 @@ export const parseText = (text: string): Chapter[] => {
       if (type === '对话') {
         let avatarStyle = '', customColor = '';
         for (let i = 2; i < parts.length; i++) {
-          if (parts[i].startsWith('头像=')) avatarStyle = parts[i].replace('头像=', '');
+          if (parts[i].startsWith('头像=')) avatarStyle = normalizeAvatarName(parts[i].replace('头像=', ''));
           else if (parts[i].startsWith('color=')) customColor = parts[i].replace('color=', '');
         }
         return { type: 'dialogue', character: parts[0], content: parts[1], avatarStyle, customColor };
@@ -248,16 +307,7 @@ export const parseText = (text: string): Chapter[] => {
   return parsedChapters;
 };
 
-const blockToText = (block: ParsedBlock): string => {
-  if (block.type === 'narration') return `{{旁白|${block.content}}}`;
-  if (block.type === 'narration-thought') return `{{旁白|心理|${block.content}}}`;
-  if (block.type === 'dialogue') {
-    let s = `{{对话|${block.character}|${block.content}`;
-    if (block.avatarStyle) s += `|头像=${block.avatarStyle}`;
-    return s + '}}';
-  }
-  return '';
-};
+const blockToText = (block: ParsedBlock): string => serializeBlock(block);
 
 export const regenerateInputText = (chaptersData: Chapter[]): string => {
   if (chaptersData.length === 1 && chaptersData[0].format === 'general') {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, createContext, useContext, ReactNode, useCallback } from 'react';
 import { X, CheckCircle, AlertTriangle, Info } from 'lucide-react';
+import CenteredModal from './common/CenteredModal';
 
 // Types
 type ToastType = 'success' | 'error' | 'info';
@@ -107,19 +108,17 @@ const Toast: React.FC<{ toast: ToastMessage; onDismiss: (id: number) => void }> 
 
 // Modal Component
 const Modal: React.FC<{ isOpen: boolean; children: ReactNode; onClose?: () => void; }> = ({ isOpen, children, onClose }) => {
-  if (!isOpen) return null;
   return (
-    <div
-      className="fixed inset-0 z-10000 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in"
-      onMouseDown={onClose}
+    <CenteredModal
+      open={isOpen}
+      onClose={onClose}
+      zIndexClassName="z-10000"
+      panelClassName="relative w-full max-w-md mx-4 overflow-hidden rounded-2xl bg-white shadow-2xl"
+      bodyClassName={null}
+      showCloseButton={false}
     >
-      <div
-        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 animate-modal-in overflow-hidden"
-        onMouseDown={e => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
+      {children}
+    </CenteredModal>
   );
 };
 

@@ -2,7 +2,7 @@
 import { getAvatarPath } from '../../utils/avatarMap';
 import AvatarPicker from '../AvatarPicker';
 import { ParsedBlock } from './types';
-import { getCharacterColor } from './textParserUtils';
+import { getCharacterColor, parseEditableBlocksText, serializeBlocksText } from './textParserUtils';
 import { ExtractedFrame, VideoFile, ROI } from '../../types';
 
 export interface NestedChoiceGroupProps {
@@ -45,6 +45,7 @@ export interface NestedChoiceGroupProps {
   onInsertBlock: (afterIndex: number, blockType: 'narration' | 'narration-thought' | 'dialogue' | 'nested-choice-group') => void;
   onDeleteBlock: (blockIndex: number) => void;
   showConfirm: (opts: { title: string; message: string }) => Promise<boolean>;
+  showAlert: (message: string, title?: string) => void;
   // 校对图片相关props
   extractedFrames?: ExtractedFrame[];
   onDeleteFrames?: (ids: string[]) => void;
@@ -93,6 +94,7 @@ const NestedChoiceGroup: React.FC<NestedChoiceGroupProps> = ({
   onInsertBlock,
   onDeleteBlock,
   showConfirm,
+  showAlert,
   extractedFrames = [],
   onDeleteFrames,
   onJumpToTime,
@@ -105,6 +107,33 @@ const NestedChoiceGroup: React.FC<NestedChoiceGroupProps> = ({
   const opts = block.nestedOptions || [];
   const selectedShowIndex = nestedSelectedOption[index] ?? (opts[0]?.showIndex ?? null);
   const selectedOpt = selectedShowIndex !== null ? opts.find(o => o.showIndex === selectedShowIndex) : null;
+  const [isRawEditing, setIsRawEditing] = React.useState(false);
+  const [rawEditingText, setRawEditingText] = React.useState('');
+
+  React.useEffect(() => {
+    setIsRawEditing(false);
+    setRawEditingText('');
+  }, [index, selectedShowIndex, block.nestedOptions]);
+
+  const startRawEditing = () => {
+    if (!selectedOpt) return;
+    setRawEditingText(serializeBlocksText(selectedOpt.blocks));
+    setIsRawEditing(true);
+  };
+
+  const saveRawEditing = () => {
+    if (!selectedOpt) return;
+    const parsed = parseEditableBlocksText(rawEditingText);
+    if (parsed.error) {
+      showAlert(parsed.error, '原文解析失败');
+      return;
+    }
+    onUpdateNestedGroup(index, opts =>
+      opts.map(o => o.showIndex === selectedOpt.showIndex ? { ...o, blocks: parsed.blocks } : o)
+    );
+    setIsRawEditing(false);
+    setRawEditingText('');
+  };
 
   const renderContentBlock = (b: ParsedBlock, bi: number, showIndex: number) => {
     const fakeKey = `nested-${index}-${showIndex}-${bi}`;
@@ -516,20 +545,56 @@ const NestedChoiceGroup: React.FC<NestedChoiceGroupProps> = ({
       {/* 选中选项的内容块 */}
       {selectedOpt && (
         <div className="pl-3 border-l-2 border-[#e0d8cc] mb-2">
-          {selectedOpt.blocks.length === 0
-            ? <div className="px-4 py-2 text-xs text-gray-400 italic">（此选项暂无内容）</div>
-            : selectedOpt.blocks.map((b, bi) => renderContentBlock(b, bi, selectedOpt.showIndex))
-          }
-          <div className="flex justify-end gap-1.5 mt-1">
-            <button
-              onClick={() => onInsertNestedContentBlock(index, selectedOpt.showIndex, 'narration')}
-              className="px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded border border-gray-300 transition-colors"
-            >＋ 旁白</button>
-            <button
-              onClick={() => onInsertNestedContentBlock(index, selectedOpt.showIndex, 'dialogue')}
-              className="px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded border border-gray-300 transition-colors"
-            >＋ 对话</button>
+          <div className="flex justify-end gap-1.5 mb-2">
+            {isRawEditing ? (
+              <>
+                <button
+                  onClick={saveRawEditing}
+                  className="px-2.5 py-1 text-xs text-white bg-green-600 hover:bg-green-700 rounded border border-green-700 transition-colors"
+                >保存原文</button>
+                <button
+                  onClick={() => {
+                    setIsRawEditing(false);
+                    setRawEditingText('');
+                  }}
+                  className="px-2.5 py-1 text-xs text-white bg-gray-500 hover:bg-gray-600 rounded border border-gray-600 transition-colors"
+                >取消</button>
+              </>
+            ) : (
+              <button
+                onClick={startRawEditing}
+                className="px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded border border-gray-300 transition-colors"
+              >编辑原文</button>
+            )}
           </div>
+          {isRawEditing ? (
+            <div className="space-y-1.5 mb-2">
+              <textarea
+                value={rawEditingText}
+                onChange={(e) => setRawEditingText(e.target.value)}
+                className="w-full min-h-[140px] px-3 py-2 border border-amber-300 rounded-lg text-xs font-mono resize-vertical bg-white text-gray-900"
+                placeholder="直接编辑当前嵌套分歧选项对应的模板原文，例如：{{对话|角色|内容}}"
+              />
+              <div className="text-[11px] text-gray-500">{'支持直接粘贴 {{旁白}}、{{对话}}、{{分歧}}、{{嵌套分歧}} 模板。'}</div>
+            </div>
+          ) : (
+            <>
+              {selectedOpt.blocks.length === 0
+                ? <div className="px-4 py-2 text-xs text-gray-400 italic">（此选项暂无内容）</div>
+                : selectedOpt.blocks.map((b, bi) => renderContentBlock(b, bi, selectedOpt.showIndex))
+              }
+              <div className="flex justify-end gap-1.5 mt-1">
+                <button
+                  onClick={() => onInsertNestedContentBlock(index, selectedOpt.showIndex, 'narration')}
+                  className="px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded border border-gray-300 transition-colors"
+                >＋ 旁白</button>
+                <button
+                  onClick={() => onInsertNestedContentBlock(index, selectedOpt.showIndex, 'dialogue')}
+                  className="px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded border border-gray-300 transition-colors"
+                >＋ 对话</button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

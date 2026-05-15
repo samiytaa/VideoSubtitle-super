@@ -28,12 +28,61 @@ body {
   from { opacity: 0; transform: scale(0.93); }
   to   { opacity: 1; transform: scale(1); }
 }
+@keyframes baimiao-modal-in {
+  from { opacity: 0; transform: scale(0.92) translateY(12px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes right-slide-panel-in {
+  0% { opacity: 0; transform: translate3d(48px, 0, 0) scale(0.985); }
+  65% { opacity: 1; transform: translate3d(-6px, 0, 0) scale(1); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes right-slide-panel-out {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to   { opacity: 0; transform: translate3d(28px, 0, 0) scale(0.992); }
+}
+@keyframes right-slide-panel-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes right-slide-panel-overlay-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
 .animate-fade-in { animation: fade-in 0.2s ease-out forwards; }
 /* Toast 弹入动画 */
 .animate-fade-in-right { animation: toast-pop-in 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
 /* Modal 弹入动画（独立，稳重居中缩放） */
 .animate-modal-in { animation: modal-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
 .animate-scale-in { animation: modal-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.animate-baimiao-modal-in { animation: baimiao-modal-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+.right-slide-panel-overlay {
+  animation: right-slide-panel-overlay-in 0.18s ease-out both;
+}
+
+.right-slide-panel-overlay[data-state='closed'] {
+  animation: right-slide-panel-overlay-out 0.18s ease-in both;
+}
+
+.right-slide-panel-shell {
+  transform-origin: right center;
+  will-change: transform, opacity;
+  animation: right-slide-panel-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.right-slide-panel-shell[data-state='closed'] {
+  animation: right-slide-panel-out 0.22s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .right-slide-panel-overlay,
+  .right-slide-panel-overlay[data-state='closed'],
+  .right-slide-panel-shell,
+  .right-slide-panel-shell[data-state='closed'] {
+    animation-duration: 0.01ms;
+  }
+}
 
 @layer utilities {
   .scrollbar-thin {
@@ -53,4 +102,12 @@ body {
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background-color: #94a3b8; /* slate-400 */
   }
+}
+
+/* InputEditor contentEditable placeholder */
+[contenteditable][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+  white-space: pre-wrap;
 }

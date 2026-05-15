@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { SIDE_PANEL_COLLAPSED_WIDTH } from './panelConstants';
 
 interface ResizablePanelProps {
   children: React.ReactNode;
@@ -8,6 +9,7 @@ interface ResizablePanelProps {
   maxWidth?: number;
   collapsedWidth?: number;
   defaultCollapsed?: boolean; // 新增：默认是否折叠
+  label?: string; // 折叠时显示的标签文字
 }
 
 const ResizablePanel: React.FC<ResizablePanelProps> = ({
@@ -15,8 +17,9 @@ const ResizablePanel: React.FC<ResizablePanelProps> = ({
   defaultWidth = 320,
   minWidth = 200,
   maxWidth = 800,
-  collapsedWidth = 48,
-  defaultCollapsed = false
+  collapsedWidth = SIDE_PANEL_COLLAPSED_WIDTH,
+  defaultCollapsed = false,
+  label = '校对图片',
 }) => {
   // 计算初始宽度
   const getInitialWidth = () => {
@@ -102,30 +105,49 @@ const ResizablePanel: React.FC<ResizablePanelProps> = ({
   };
 
   return (
-    // 外层：overflow-visible，让按钮可以突出边缘
     <div
-      className="relative h-full shrink-0 transition-all duration-300"
+      className="border-r border-gray-200 bg-gray-50 shrink-0 flex flex-col relative transition-all duration-300 h-full"
       style={{
         width: isCollapsed ? collapsedWidth : width,
         minWidth: isCollapsed ? collapsedWidth : minWidth,
-        maxWidth: isCollapsed ? collapsedWidth : maxWidth
+        maxWidth: isCollapsed ? collapsedWidth : maxWidth,
       }}
     >
-      {/* 内层面板：overflow-hidden 裁切内容 */}
-      <div
-        ref={panelRef}
-        className="relative bg-white border-r border-gray-200 overflow-hidden h-full w-full"
-      >
-        {isCollapsed ? (
-          // 折叠状态：只显示竖向文字标签
-          <div className="h-full flex flex-col items-center justify-center px-1">
-            <div className="[writing-mode:vertical-rl] text-xs text-gray-400 select-none tracking-widest">
-              校对图片
-            </div>
+      {isCollapsed ? (
+        // 折叠状态：图标按钮 + 竖排文字（复用 AvatarPicker 左侧分类栏样式）
+        <div className="box-border h-full w-full flex flex-col items-center justify-start pt-5 px-1.5">
+          <button
+            onClick={toggleCollapse}
+            className="p-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+            title="展开面板"
+          >
+            <PanelLeftOpen className="w-3.5 h-3.5" />
+          </button>
+          <div className="[writing-mode:vertical-rl] text-[11px] leading-none text-gray-500 mt-2.5 select-none">
+            {label}
           </div>
-        ) : (
-          // 展开状态：内容 + 拖动手柄
-          <>
+        </div>
+      ) : (
+        // 展开状态：标题栏 + 折叠按钮 + 内容（复用 AvatarPicker 左侧分类栏样式）
+        <>
+          {/* 标题栏 */}
+          <div className="px-4 py-2.5 border-b border-gray-200 flex items-center gap-2 shrink-0">
+            <span className="text-xs font-medium text-gray-700 shrink-0">{label}</span>
+            <div className="ml-auto" />
+            <button
+              onClick={toggleCollapse}
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors shrink-0"
+              title="折叠面板"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* 内容区 */}
+          <div
+            ref={panelRef}
+            className="flex-1 overflow-hidden relative"
+          >
             <div className="h-full p-2">
               {children}
             </div>
@@ -147,21 +169,9 @@ const ResizablePanel: React.FC<ResizablePanelProps> = ({
                 </div>
               </div>
             )}
-          </>
-        )}
-      </div>
-
-      {/* 收缩/展开 toggle 按钮：绝对定位在外层，不受 overflow-hidden 裁切 */}
-      <button
-        onClick={toggleCollapse}
-        className="absolute top-1/2 -translate-y-1/2 -right-3 z-20 flex items-center justify-center w-6 h-14 bg-white border border-gray-200 rounded-r-xl shadow-[2px_2px_8px_rgba(0,0,0,0.10)] hover:bg-indigo-50 hover:border-indigo-300 hover:shadow-[2px_2px_12px_rgba(99,102,241,0.18)] transition-all duration-200 group"
-        title={isCollapsed ? '展开面板' : '折叠面板'}
-      >
-        {isCollapsed
-          ? <ChevronRight className="w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-500 transition-colors duration-200" />
-          : <ChevronLeft  className="w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-500 transition-colors duration-200" />
-        }
-      </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };

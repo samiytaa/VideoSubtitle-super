@@ -7,12 +7,15 @@ import { ParsedBlock } from '../../types';
 const NarrationThoughtBlockItem = React.memo(({ block, index, blockKey }: BasicBlockItemProps<Extract<ParsedBlock, { type: 'narration-thought' }>>) => {
   const editor = useEditorBlockContext();
   const isEditing = editor.editingState.blockIndex === index;
+  const isInsertMenuOpen = editor.menuState.activeInsertMenuIndex === index;
+  const isConvertMenuOpen = editor.menuState.activeNarrationConvertMenuIndex === index;
+  const isMenuOpen = isInsertMenuOpen || isConvertMenuOpen;
 
   return (
     <div
       key={index}
       ref={(el) => editor.actions.setBlockRef(blockKey, el)}
-      className={`group relative px-4 py-3 mb-1.5 rounded-lg text-sm leading-relaxed cursor-pointer transition-all ${isEditing ? 'ring-2 ring-indigo-500' : ''}`}
+      className={`group relative z-0 overflow-visible px-4 py-3 mb-2.5 last:mb-0 rounded-lg text-sm leading-relaxed cursor-pointer transition-all hover:z-20 ${isMenuOpen ? 'z-30' : ''} ${isEditing ? 'ring-2 ring-indigo-500' : ''}`}
       style={{ backgroundColor: '#7b7b77' }}
       onClick={() => !isEditing && editor.actions.startEditing(index, block)}
       onMouseEnter={(e) => { if (!isEditing) e.currentTarget.style.backgroundColor = '#8a8a86'; }}
@@ -41,7 +44,7 @@ const NarrationThoughtBlockItem = React.memo(({ block, index, blockKey }: BasicB
             <div className="relative">
               <button onClick={(e) => { e.stopPropagation(); editor.actions.toggleNarrationConvertMenu(index); }} className="px-2 py-1 bg-amber-500 text-white rounded text-xs hover:bg-amber-600 transition-colors" title="转换类型">⇄</button>
               <ConvertMenu
-                isOpen={editor.menuState.activeNarrationConvertMenuIndex === index}
+                isOpen={isConvertMenuOpen}
                 options={[
                   { label: '普通旁白', onClick: () => editor.actions.convertThoughtToNarration(index) },
                   { label: '对话', onClick: () => editor.actions.convertThoughtToDialogueAsSelf(index) }
@@ -52,7 +55,7 @@ const NarrationThoughtBlockItem = React.memo(({ block, index, blockKey }: BasicB
             <button onClick={async (e) => { e.stopPropagation(); await editor.actions.deleteThoughtBlock(index); }} className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors" title="删除">✕</button>
           </div>
           <InsertMenu
-            isOpen={editor.menuState.activeInsertMenuIndex === index}
+            isOpen={isInsertMenuOpen}
             onClose={editor.actions.closeInsertMenu}
             onInsert={(type) => editor.actions.insertBlockFromMenu(index, type)}
           />

@@ -1,0 +1,1 @@
+export const SIDE_PANEL_COLLAPSED_WIDTH = 40;

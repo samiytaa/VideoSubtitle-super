@@ -3,6 +3,7 @@ import { RoiPreset } from '../../types';
 import { useNotifier } from '../Notifications';
 import { DEFAULT_PRESETS, STORAGE_KEY } from './roiSelectorUtils';
 import { handleError } from '../../utils/errorHandler';
+import { saveRoiPresets } from '../../utils/roiPresetStore';
 
 export function usePresets() {
   const notifier = useNotifier();
@@ -26,6 +27,7 @@ export function usePresets() {
   // 自动同步到 localStorage
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
+    saveRoiPresets(presets);
   }, [presets]);
 
   const deletePreset = async (e: React.MouseEvent, name: string) => {

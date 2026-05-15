@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 
 import { config } from "./config.js";
 import { handlePrivateBaimiaoRequest, handleBaimiaoOcrRequest } from "./routes/baimiao-routes.js";
+import { handleVideoExtractionRequest } from "./routes/video-extraction-routes.js";
 import { sendError, serveStaticFile } from "./utils/http.js";
 
 const isViteDev = process.env.VITE_DEV === "1";
@@ -22,6 +23,9 @@ const server = createServer(async (request, response) => {
 
   try {
     if (url.pathname.startsWith("/api/")) {
+      const handledVideoExtraction = await handleVideoExtractionRequest(request, response, url);
+      if (handledVideoExtraction) return;
+
       const handled = await handlePrivateBaimiaoRequest({ request, response, url });
       if (!handled) sendError(response, 404, "API route not found");
       return;

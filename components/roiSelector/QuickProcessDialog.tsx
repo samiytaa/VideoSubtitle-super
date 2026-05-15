@@ -2,8 +2,14 @@ import { Scan, Upload } from 'lucide-react';
 import React from 'react';
 import { RoiPreset, VideoFile } from '../../types';
 import { useNotifier } from '../Notifications';
-import { formatTimeHms } from './roiSelectorUtils';
+import CenteredModal from '../common/CenteredModal';
 import { formatTimestampDisplay } from '../../utils/filenameUtils';
+import {
+  getDefaultQuickProcessPrefs,
+  loadQuickProcessPrefs,
+  subscribeQuickProcessPrefs,
+  updateQuickProcessPrefs,
+} from '../../utils/quickProcessPrefs';
 
 interface QuickProcessDialogProps {
   video?: VideoFile | null;
@@ -45,10 +51,14 @@ const QuickProcessDialog: React.FC<QuickProcessDialogProps> = ({
   srtFile,
 }) => {
   const notifier = useNotifier();
+  const savedPrefs = React.useMemo(() => ({
+    ...getDefaultQuickProcessPrefs(),
+    ...loadQuickProcessPrefs(),
+  }), []);
   const [captureType, setCaptureType] = React.useState<'dialogue' | 'location' | 'both'>('both');
-  const [autoDeduplicationDialogue, setAutoDeduplicationDialogue] = React.useState<boolean>(false);
-  const [autoDeduplicationLocation, setAutoDeduplicationLocation] = React.useState<boolean>(true);
-  const [frameInterval, setFrameInterval] = React.useState<number>(15);
+  const [autoDeduplicationDialogue, setAutoDeduplicationDialogue] = React.useState<boolean>(savedPrefs.autoDeduplicationDialogue);
+  const [autoDeduplicationLocation, setAutoDeduplicationLocation] = React.useState<boolean>(savedPrefs.autoDeduplicationLocation);
+  const [frameInterval, setFrameInterval] = React.useState<number>(savedPrefs.frameInterval);
 
   const dialoguePresets = React.useMemo(
     () => (Object.values(presets) as RoiPreset[]).filter(p =>
@@ -63,6 +73,14 @@ const QuickProcessDialog: React.FC<QuickProcessDialogProps> = ({
     ),
     [presets],
   );
+
+  React.useEffect(() => {
+    return subscribeQuickProcessPrefs((prefs) => {
+      if (typeof prefs.autoDeduplicationDialogue === 'boolean') setAutoDeduplicationDialogue(prefs.autoDeduplicationDialogue);
+      if (typeof prefs.autoDeduplicationLocation === 'boolean') setAutoDeduplicationLocation(prefs.autoDeduplicationLocation);
+      if (typeof prefs.frameInterval === 'number') setFrameInterval(prefs.frameInterval);
+    });
+  }, []);
 
   const handleConfirm = () => {
     let dialoguePreset: RoiPreset | null = null;
@@ -99,28 +117,31 @@ const QuickProcessDialog: React.FC<QuickProcessDialogProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-9999 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden">
-        {/* 固定头部 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-            <Scan className="w-4 h-4 text-indigo-600" />
-            一键处理
-          </h3>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40"
-            disabled={isProcessing}
-            aria-label="关闭"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* 可滚动内容区域 */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+    <CenteredModal
+      open={true}
+      onClose={onClose}
+      title="一键处理"
+      headerIcon={<Scan className="w-4 h-4 text-indigo-600" />}
+      closeOnOverlay={!isProcessing}
+      closeButtonDisabled={isProcessing}
+      panelClassName="w-full max-w-lg mx-4 flex max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+      bodyClassName={null}
+      footer={
+        <button
+          onClick={handleConfirm}
+          className="inline-flex items-center justify-center rounded-lg px-5 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={
+            isProcessing ||
+            (captureType === 'dialogue' && dialoguePresets.length === 0) ||
+            (captureType === 'location' && locationPresets.length === 0) ||
+            (captureType === 'both' && (dialoguePresets.length === 0 || locationPresets.length === 0))
+          }
+        >
+          {isProcessing ? '处理中...' : '一键处理'}
+        </button>
+      }
+    >
+      <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
           {/* 步骤 1：截取时间范围 */}
           <div>
             <h4 className="text-sm font-semibold text-gray-800 mb-2 flex items-center gap-2">
@@ -186,7 +207,11 @@ const QuickProcessDialog: React.FC<QuickProcessDialogProps> = ({
                   min={1}
                   max={300}
                   value={frameInterval}
-                  onChange={e => setFrameInterval(Math.max(1, Math.min(300, parseInt(e.target.value) || 1)))}
+                  onChange={e => {
+                    const next = Math.max(1, Math.min(300, parseInt(e.target.value) || 1));
+                    setFrameInterval(next);
+                    updateQuickProcessPrefs({ frameInterval: next });
+                  }}
                   disabled={isProcessing}
                   className="w-20 text-xs text-center border border-amber-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400 bg-white"
                 />
@@ -301,7 +326,10 @@ const QuickProcessDialog: React.FC<QuickProcessDialogProps> = ({
                   <input
                     type="checkbox"
                     checked={autoDeduplicationDialogue}
-                    onChange={e => setAutoDeduplicationDialogue(e.target.checked)}
+                    onChange={e => {
+                      setAutoDeduplicationDialogue(e.target.checked);
+                      updateQuickProcessPrefs({ autoDeduplicationDialogue: e.target.checked });
+                    }}
                     disabled={isProcessing}
                     className="w-4 h-4 text-blue-600 border-blue-300 rounded focus:ring-2 focus:ring-blue-500"
                   />
@@ -318,7 +346,10 @@ const QuickProcessDialog: React.FC<QuickProcessDialogProps> = ({
                   <input
                     type="checkbox"
                     checked={autoDeduplicationLocation}
-                    onChange={e => setAutoDeduplicationLocation(e.target.checked)}
+                    onChange={e => {
+                      setAutoDeduplicationLocation(e.target.checked);
+                      updateQuickProcessPrefs({ autoDeduplicationLocation: e.target.checked });
+                    }}
                     disabled={isProcessing}
                     className="w-4 h-4 text-green-600 border-green-300 rounded focus:ring-2 focus:ring-green-500"
                   />
@@ -410,25 +441,8 @@ const QuickProcessDialog: React.FC<QuickProcessDialogProps> = ({
               </div>
             )}
           </div>
-        </div>
-
-        {/* 固定脚部 */}
-        <div className="flex flex-row-reverse gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50">
-          <button
-            onClick={handleConfirm}
-            className="inline-flex items-center justify-center rounded-lg px-5 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={
-              isProcessing ||
-              (captureType === 'dialogue' && dialoguePresets.length === 0) ||
-              (captureType === 'location' && locationPresets.length === 0) ||
-              (captureType === 'both' && (dialoguePresets.length === 0 || locationPresets.length === 0))
-            }
-          >
-            {isProcessing ? '处理中...' : '一键处理'}
-          </button>
-        </div>
       </div>
-    </div>
+    </CenteredModal>
   );
 };
 

@@ -2,11 +2,12 @@ import { createReadStream, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 
 import { config } from "../config.js";
+import { runtimePaths } from "../runtime-paths.js";
 
 const textEncoder = new TextEncoder();
 const publicDirectory = process.env.VITE_DEV === "1"
-  ? join(process.cwd(), "public")
-  : join(process.cwd(), "dist");
+  ? runtimePaths.publicDirectory
+  : runtimePaths.distDirectory;
 const HTML_CACHE_CONTROL = "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
 const DYNAMIC_ASSET_CACHE_CONTROL = "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
 const STATIC_CACHE_CONTROL = "public, max-age=0, must-revalidate";

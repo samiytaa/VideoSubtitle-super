@@ -12,6 +12,10 @@ export const resolveBackendUrl = (path: string) => {
     return `http://127.0.0.1:3000${path}`;
   }
 
+  if (import.meta.env.DEV) {
+    return `http://127.0.0.1:3000${path}`;
+  }
+
   return path;
 };
 

@@ -15,7 +15,7 @@ const ConvertMenu: React.FC<ConvertMenuProps> = ({ isOpen, options }) => {
 
   return (
     <div
-      className="absolute right-0 top-7 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex flex-col gap-1 z-20 min-w-[120px]"
+      className="absolute right-0 top-7 z-50 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex flex-col gap-1 min-w-[120px]"
       onClick={(e) => e.stopPropagation()}
     >
       {options.map((option, idx) => (

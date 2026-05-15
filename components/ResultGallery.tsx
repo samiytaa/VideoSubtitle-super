@@ -1,16 +1,27 @@
 import React, { useState } from 'react';
-import { Image as ImageIcon, Layers } from 'lucide-react';
+import { Image as ImageIcon, Layers, X, ChevronLeft, ChevronRight, Trash2, Scissors, RefreshCw } from 'lucide-react';
 import { ExtractedFrame, MergedImage } from '../types';
 import { downloadAsZip } from '../utils/imageUtils';
 import { useNotifier } from './Notifications';
 import { removeDuplicateImagesAdvanced } from '../utils/imageComparisonUtils';
 import GalleryToolbar from './resultGallery/GalleryToolbar';
+import PaginationToolbar from './resultGallery/PaginationToolbar';
 import FrameCard from './resultGallery/FrameCard';
 import MergedImageCard from './resultGallery/MergedImageCard';
 import MergeGroupDialog from './resultGallery/MergeGroupDialog';
+import ImageInfoPanel from './resultGallery/ImageInfoPanel';
 import { ResultGalleryProps, ViewType, GroupFilter, ItemsPerRow } from './resultGallery/types';
 import { DEFAULT_MERGE_BATCH_SIZE } from '../config/constants';
 import { confirmDelete } from '../utils/confirmActions';
+import { useFrameFilter, useGalleryPagination } from '../hooks';
+
+const GALLERY_STORAGE_KEYS = {
+  viewType: 'resultGallery_viewType',
+  itemsPerPageFrames: 'resultGallery_itemsPerPage_frames',
+  itemsPerPageMerged: 'resultGallery_itemsPerPage_merged',
+  itemsPerRowFrames: 'resultGallery_itemsPerRow_frames',
+  itemsPerRowMerged: 'resultGallery_itemsPerRow_merged'
+} as const;
 
 const ResultGallery: React.FC<ResultGalleryProps> = ({
   frames,
@@ -31,52 +42,49 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
   const [isDownloading, setIsDownloading] = useState(false);
   const [rangeSelectMode, setRangeSelectMode] = useState(false);
   const [rangeStart, setRangeStart] = useState<string | null>(null);
-  const [viewType, setViewType] = useState<ViewType>('frames');
+  const [viewType, setViewType] = useState<ViewType>(() => {
+    if (typeof window === 'undefined') return 'frames';
+    const saved = window.localStorage.getItem(GALLERY_STORAGE_KEYS.viewType);
+    return saved === 'merged' ? 'merged' : 'frames';
+  });
   const [batchSize, setBatchSize] = useState<number>(DEFAULT_MERGE_BATCH_SIZE);
   const [selectedGroup, setSelectedGroup] = useState<GroupFilter>('all');
   const [showMergeGroupDialog, setShowMergeGroupDialog] = useState(false);
   const [isDeduplicating, setIsDeduplicating] = useState(false);
   const [deduplicateProgress, setDeduplicateProgress] = useState({ current: 0, total: 0 });
   const [sortTrigger, setSortTrigger] = useState(0);
+  const [selectedInfoItem, setSelectedInfoItem] = useState<ExtractedFrame | MergedImage | null>(null);
+
+  const getStoredItemsPerPage = (type: ViewType): number => {
+    if (typeof window === 'undefined') return 50;
+    const key = type === 'frames'
+      ? GALLERY_STORAGE_KEYS.itemsPerPageFrames
+      : GALLERY_STORAGE_KEYS.itemsPerPageMerged;
+    const value = Number(window.localStorage.getItem(key));
+    return [20, 50, 100, 200].includes(value) ? value : 50;
+  };
+
+  const getStoredItemsPerRow = (type: ViewType): ItemsPerRow => {
+    if (typeof window === 'undefined') return 5;
+    const key = type === 'frames'
+      ? GALLERY_STORAGE_KEYS.itemsPerRowFrames
+      : GALLERY_STORAGE_KEYS.itemsPerRowMerged;
+    const value = Number(window.localStorage.getItem(key));
+    return value === 1 || value === 3 || value === 5 ? value : 5;
+  };
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(50);
-  const [itemsPerRow, setItemsPerRow] = useState<ItemsPerRow>(5);
+  const [itemsPerPage, setItemsPerPage] = useState(() => getStoredItemsPerPage(viewType));
+  const [itemsPerRow, setItemsPerRow] = useState<ItemsPerRow>(() => getStoredItemsPerRow(viewType));
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const notifier = useNotifier();
 
-  // ── 排序与过滤 ──────────────────────────────────────────────────────────────
+  // ── 排序与过滤（共用 hook）──────────────────────────────────────────────────
 
-  const filteredFrames = React.useMemo(() => {
-    const filtered =
-      selectedGroup === 'all' ? [...frames] : frames.filter((f) => f.group === selectedGroup);
+  const filteredFrames = useFrameFilter({ frames, selectedGroup, sortTrigger });
 
-    const groupPriority: Record<string, number> = { g2: 1, g1: 2 };
-
-    const extractTime = (filename: string): number => {
-      const match = filename.match(/\[(\d{2})[_:](\d{2})[_:](\d{2})\.(\d{3})\]/);
-      if (!match) return 0;
-      const [, h, m, s, ms] = match;
-      return parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s) + parseInt(ms) / 1000;
-    };
-
-    const extractGroup = (filename: string): string => {
-      const match = filename.match(/^(g[12])_/);
-      return match ? match[1] : 'g1';
-    };
-
-    filtered.sort((a, b) => {
-      const tA = extractTime(a.filename);
-      const tB = extractTime(b.filename);
-      if (tA !== tB) return tA - tB;
-      const pA = groupPriority[extractGroup(a.filename)] ?? 999;
-      const pB = groupPriority[extractGroup(b.filename)] ?? 999;
-      if (pA !== pB) return pA - pB;
-      return a.filename.localeCompare(b.filename);
-    });
-    return filtered;
-  }, [frames, selectedGroup, sortTrigger]);
+  // ── 分页 ────────────────────────────────────────────────────────────────────
 
   const currentItems = React.useMemo(() => {
     const items = viewType === 'frames' ? filteredFrames : mergedImages;
@@ -92,6 +100,32 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
   React.useEffect(() => {
     setCurrentPage(1);
   }, [viewType, selectedGroup]);
+
+  React.useEffect(() => {
+    setItemsPerPage(getStoredItemsPerPage(viewType));
+    setItemsPerRow(getStoredItemsPerRow(viewType));
+  }, [viewType]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(GALLERY_STORAGE_KEYS.viewType, viewType);
+  }, [viewType]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const key = viewType === 'frames'
+      ? GALLERY_STORAGE_KEYS.itemsPerPageFrames
+      : GALLERY_STORAGE_KEYS.itemsPerPageMerged;
+    window.localStorage.setItem(key, String(itemsPerPage));
+  }, [itemsPerPage, viewType]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const key = viewType === 'frames'
+      ? GALLERY_STORAGE_KEYS.itemsPerRowFrames
+      : GALLERY_STORAGE_KEYS.itemsPerRowMerged;
+    window.localStorage.setItem(key, String(itemsPerRow));
+  }, [itemsPerRow, viewType]);
 
   const gridColsClass = React.useMemo(() => {
     switch (itemsPerRow) {
@@ -241,6 +275,67 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
     setSelectedIds(newIds);
     setSelectedOrder(newOrder);
     notifier.addToast(`已删除 ${selected.length} 张图片`, 'success');
+  };
+
+  const handleDeleteBeforeSelected = async () => {
+    const items = viewType === 'frames' ? filteredFrames : mergedImages;
+    const selectedInView = items.filter((i) => selectedIds.has(i.id));
+    if (selectedInView.length === 0) { notifier.addToast('请先选择图片', 'warning'); return; }
+
+    // 找到选中图片中索引最小的那张（最早的），删除它及之前所有图片
+    const firstSelectedIdx = items.findIndex((i) => selectedIds.has(i.id));
+    const toDelete = items.slice(0, firstSelectedIdx + 1);
+    if (toDelete.length === 0) return;
+
+    const confirmed = await notifier.showConfirm({
+      title: '删除之前的图片',
+      message: `将删除第 1 张到第 ${firstSelectedIdx + 1} 张（含选中图片），共 ${toDelete.length} 张。是否继续？`,
+    });
+    if (!confirmed) return;
+
+    const ids = toDelete.map((i) => i.id);
+    const idSet = new Set(ids);
+    if (viewType === 'frames') onDelete?.(ids);
+    else onDeleteMerged?.(ids);
+
+    const newIds = new Set(selectedIds);
+    ids.forEach((id) => newIds.delete(id));
+    const newOrder = selectedOrder.filter((id) => !idSet.has(id));
+    setSelectedIds(newIds);
+    setSelectedOrder(newOrder);
+    notifier.addToast(`已删除 ${toDelete.length} 张图片`, 'success');
+  };
+
+  const handleDeleteAfterSelected = async () => {
+    const items = viewType === 'frames' ? filteredFrames : mergedImages;
+    const selectedInView = items.filter((i) => selectedIds.has(i.id));
+    if (selectedInView.length === 0) { notifier.addToast('请先选择图片', 'warning'); return; }
+
+    // 找到选中图片中索引最大的那张（最晚的），删除它及之后所有图片
+    let lastSelectedIdx = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (selectedIds.has(items[i].id)) { lastSelectedIdx = i; break; }
+    }
+    const toDelete = items.slice(lastSelectedIdx);
+    if (toDelete.length === 0) return;
+
+    const confirmed = await notifier.showConfirm({
+      title: '删除之后的图片',
+      message: `将删除第 ${lastSelectedIdx + 1} 张到第 ${items.length} 张（含选中图片），共 ${toDelete.length} 张。是否继续？`,
+    });
+    if (!confirmed) return;
+
+    const ids = toDelete.map((i) => i.id);
+    const idSet = new Set(ids);
+    if (viewType === 'frames') onDelete?.(ids);
+    else onDeleteMerged?.(ids);
+
+    const newIds = new Set(selectedIds);
+    ids.forEach((id) => newIds.delete(id));
+    const newOrder = selectedOrder.filter((id) => !idSet.has(id));
+    setSelectedIds(newIds);
+    setSelectedOrder(newOrder);
+    notifier.addToast(`已删除 ${toDelete.length} 张图片`, 'success');
   };
 
   const handleClearCurrent = async () => {
@@ -393,52 +488,66 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
   // ── 渲染 ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6">
-      <GalleryToolbar
-        frames={frames}
-        mergedImages={mergedImages}
-        filteredFrames={filteredFrames}
-        viewType={viewType}
-        selectedGroup={selectedGroup}
-        selectedIds={selectedIds}
-        selectedOrder={selectedOrder}
-        rangeSelectMode={rangeSelectMode}
-        rangeStart={rangeStart}
-        currentPage={currentPage}
-        totalPages={totalPages}
-        itemsPerPage={itemsPerPage}
-        itemsPerRow={itemsPerRow}
-        isDeduplicating={isDeduplicating}
-        deduplicateProgress={deduplicateProgress}
-        isDownloading={isDownloading}
-        batchSize={batchSize}
-        fileInputRef={fileInputRef}
-        onViewTypeChange={(type) => {
-          setViewType(type);
-          setSelectedIds(new Set());
-          setSelectedOrder([]);
-        }}
-        onGroupChange={setSelectedGroup}
-        onSelectAll={selectAll}
-        onInvertSelection={invertSelection}
-        onToggleRangeSelectMode={toggleRangeSelectMode}
-        onClearSelection={() => { setSelectedIds(new Set()); setSelectedOrder([]); }}
-        onMergeSelected={handleMergeSelected}
-        onBatchSizeChange={setBatchSize}
-        onRemoveDuplicates={handleRemoveDuplicates}
-        onImportClick={handleImportClick}
-        onFileImport={handleFileImport}
-        onDownloadZip={handleDownloadZip}
-        onDeleteSelected={handleDeleteSelected}
-        onClearCurrent={handleClearCurrent}
-        onClearAllData={handleClearAllData}
-        onMergeGroupsClick={() => setShowMergeGroupDialog(true)}
-        onPageChange={setCurrentPage}
-        onItemsPerPageChange={setItemsPerPage}
-        onItemsPerRowChange={setItemsPerRow}
-      />
+    <div className="space-y-3 px-3 pb-2 pt-0 sm:px-4 sm:pt-0 lg:px-5">
+      {/* 固定头部容器 - 包含两个工具栏 */}
+      <div className="sticky top-[52px] z-40 space-y-1 rounded-none border border-gray-200/80 bg-white px-4 py-2 shadow-sm sm:px-5">
+        <GalleryToolbar
+          frames={frames}
+          mergedImages={mergedImages}
+          filteredFrames={filteredFrames}
+          viewType={viewType}
+          selectedGroup={selectedGroup}
+          selectedIds={selectedIds}
+          rangeSelectMode={rangeSelectMode}
+          isDeduplicating={isDeduplicating}
+          deduplicateProgress={deduplicateProgress}
+          isDownloading={isDownloading}
+          batchSize={batchSize}
+          itemsPerPage={itemsPerPage}
+          itemsPerRow={itemsPerRow}
+          fileInputRef={fileInputRef}
+          onViewTypeChange={(type) => {
+            setViewType(type);
+            setSelectedIds(new Set());
+            setSelectedOrder([]);
+          }}
+          onGroupChange={setSelectedGroup}
+          onToggleRangeSelectMode={toggleRangeSelectMode}
+          onMergeSelected={handleMergeSelected}
+          onBatchSizeChange={setBatchSize}
+          onItemsPerPageChange={(count) => {
+            setItemsPerPage(count);
+            setCurrentPage(1);
+          }}
+          onItemsPerRowChange={setItemsPerRow}
+          onClearCurrent={handleClearCurrent}
+          onRemoveDuplicates={handleRemoveDuplicates}
+          onImportClick={handleImportClick}
+          onFileImport={handleFileImport}
+          onDownloadZip={handleDownloadZip}
+          onClearAllData={handleClearAllData}
+          onMergeGroupsClick={() => setShowMergeGroupDialog(true)}
+        />
 
-      <div className={`grid ${gridColsClass} gap-4`}>
+        <PaginationToolbar
+          frames={frames}
+          mergedImages={mergedImages}
+          filteredFrames={filteredFrames}
+          viewType={viewType}
+          selectedIds={selectedIds}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          itemsPerPage={itemsPerPage}
+          itemsPerRow={itemsPerRow}
+          onSelectAll={selectAll}
+          onPageChange={setCurrentPage}
+          onItemsPerPageChange={setItemsPerPage}
+          onItemsPerRowChange={setItemsPerRow}
+          onClearCurrent={handleClearCurrent}
+        />
+      </div>
+
+      <div className={`grid ${gridColsClass} gap-5`}>
         {viewType === 'frames'
           ? (currentItems as ExtractedFrame[]).map((frame) => (
               <FrameCard
@@ -449,6 +558,7 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
                 selectionOrder={selectedOrder.indexOf(frame.id) + 1}
                 onClick={handleImageClick}
                 onJumpToTime={onJumpToTime}
+                onShowInfo={setSelectedInfoItem}
               />
             ))
           : (currentItems as MergedImage[]).map((img) => (
@@ -459,6 +569,7 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
                 isRangeStart={rangeSelectMode && rangeStart === img.id}
                 selectionOrder={selectedOrder.indexOf(img.id) + 1}
                 onClick={handleImageClick}
+                onShowInfo={setSelectedInfoItem}
               />
             ))}
       </div>
@@ -488,6 +599,79 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
           onConfirm={handleMergeGroupsConfirm}
           onCancel={() => setShowMergeGroupDialog(false)}
         />
+      )}
+
+      {/* 图片信息侧边栏 */}
+      {selectedInfoItem && (
+        <ImageInfoPanel
+          item={selectedInfoItem}
+          viewType={viewType}
+          onClose={() => setSelectedInfoItem(null)}
+        />
+      )}
+
+      {/* 底部悬浮工具栏：有选中时显示 */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-2 bg-white rounded-xl shadow-2xl border border-gray-200 ring-1 ring-black/5 whitespace-nowrap">
+          {/* 计数 */}
+          <span className="text-xs font-semibold text-indigo-600 px-1.5">
+            已选 {(viewType === 'frames' ? filteredFrames : mergedImages).filter((i) => selectedIds.has(i.id)).length}
+          </span>
+
+          <div className="h-5 w-px bg-gray-200 mx-0.5" />
+
+          {/* 选择操作组 */}
+          <button
+            onClick={() => { setSelectedIds(new Set()); setSelectedOrder([]); }}
+            className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <X className="w-3 h-3" /> 取消
+          </button>
+          <button
+            onClick={invertSelection}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" /> 反选
+          </button>
+          <button
+            onClick={toggleRangeSelectMode}
+            className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
+              rangeSelectMode
+                ? 'bg-green-600 text-white hover:bg-green-700 active:scale-95'
+                : 'bg-green-100 text-green-700 hover:bg-green-200'
+            }`}
+          >
+            <Scissors className="w-3 h-3" /> 范围
+          </button>
+
+          <div className="h-5 w-px bg-gray-200 mx-0.5" />
+
+          {/* 删除操作组 */}
+          <button
+            onClick={handleDeleteBeforeSelected}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 active:scale-95 transition-all"
+            title="删除选中图片及之前所有图片"
+          >
+            <ChevronLeft className="w-3.5 h-3.5 shrink-0" />
+            <span>删除之前</span>
+          </button>
+          <button
+            onClick={handleDeleteSelected}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-lg hover:bg-red-200 active:scale-95 transition-all"
+            title="删除选中图片"
+          >
+            <Trash2 className="w-3.5 h-3.5 shrink-0" />
+            <span>删除选中</span>
+          </button>
+          <button
+            onClick={handleDeleteAfterSelected}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-violet-100 text-violet-700 rounded-lg hover:bg-violet-200 active:scale-95 transition-all"
+            title="删除选中图片及之后所有图片"
+          >
+            <span>删除之后</span>
+            <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+          </button>
+        </div>
       )}
     </div>
   );

@@ -1,13 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ExtractedFrame, ExtractionMode, ExtractionParams, ProgressData, ROI, VideoFile } from '../types';
 import { generateFilename, formatTimestampDisplay } from '../utils/filenameUtils';
-import { seekVideoToTime, preloadVideo } from '../utils/videoProcessingUtils';
+import { seekVideoToTime, preloadVideo, waitForVideoFrame } from '../utils/videoProcessingUtils';
 import { handleError } from '../utils/errorHandler';
 import { logger } from '../utils/logger';
+import { resolveBackendVideoPath } from '../utils/backendVideoCache';
+import { resolveBackendUrl } from '../utils/runtimeConfig';
 import {
-  DEFAULT_HARDWARE_CONCURRENCY,
-  PROCESSING_PARALLEL_MAX,
-  PROCESSING_PARALLEL_MIN,
   PROCESSING_WEBP_QUALITY,
   PROGRESS_UPDATE_FRAME_INTERVAL,
   PROGRESS_UPDATE_INTERVAL_MS,
@@ -55,24 +54,57 @@ const supportsWebCodecs = (): boolean =>
   typeof (window as any).VideoDecoder !== 'undefined' &&
   typeof (window as any).VideoFrame !== 'undefined';
 
-const captureFrameWithWebCodecs = async (
-  video: HTMLVideoElement,
-  time: number,
-  cropX: number, cropY: number, cropW: number, cropH: number,
-  offscreen: OffscreenCanvas,
-  ctx: OffscreenCanvasRenderingContext2D,
-  quality: number
-): Promise<string> => {
-  await seekVideoToTime(video, time, 500);
-  const frame = new (window as any).VideoFrame(video);
-  ctx.drawImage(frame, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-  frame.close();
-  const blob = await offscreen.convertToBlob({ type: 'image/webp', quality });
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload  = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
+const estimateVideoFps = async (video: HTMLVideoElement): Promise<number> => {
+  const fallback = ASSUMED_VIDEO_FPS;
+  const rvfc = (video as HTMLVideoElement & {
+    requestVideoFrameCallback?: (
+      callback: (now: DOMHighResTimeStamp, metadata: { mediaTime: number; presentedFrames?: number }) => void
+    ) => number;
+    cancelVideoFrameCallback?: (handle: number) => void;
+  }).requestVideoFrameCallback;
+
+  if (typeof rvfc !== 'function') return fallback;
+
+  return new Promise<number>((resolve) => {
+    let firstTime: number | null = null;
+    let firstFrames: number | null = null;
+    let done = false;
+    let timeoutId: number | null = null;
+    let frameHandle: number | null = null;
+
+    const finish = (value: number) => {
+      if (done) return;
+      done = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      if (frameHandle !== null) {
+        (video as HTMLVideoElement & { cancelVideoFrameCallback?: (handle: number) => void })
+          .cancelVideoFrameCallback?.(frameHandle);
+      }
+      resolve(Number.isFinite(value) && value > 0 ? value : fallback);
+    };
+
+    const sample = (_now: DOMHighResTimeStamp, metadata: { mediaTime: number; presentedFrames?: number }) => {
+      const mt = metadata.mediaTime;
+      const pf = metadata.presentedFrames;
+      if (typeof pf === 'number') {
+        if (firstTime === null || firstFrames === null) {
+          firstTime = mt;
+          firstFrames = pf;
+          frameHandle = rvfc(sample);
+          return;
+        }
+        const dt = mt - firstTime;
+        const df = pf - firstFrames;
+        if (dt > 0 && df > 0) {
+          finish(df / dt);
+          return;
+        }
+      }
+      frameHandle = rvfc(sample);
+    };
+
+    frameHandle = rvfc(sample);
+    timeoutId = window.setTimeout(() => finish(fallback), 600);
   });
 };
 
@@ -88,6 +120,49 @@ interface ProcessingViewProps {
   onComplete: (frames: ExtractedFrame[]) => void;
   onProgress?: (progress: { current: number; total: number; message: string }) => void;
 }
+
+type CaptureTask = {
+  taskId: number;
+  requestedTime: number;
+  hasSubtitle: boolean;
+};
+
+const ASSUMED_VIDEO_FPS = 30;
+const FFMPEG_BATCH_SIZE = 32;
+const FFMPEG_CONCURRENCY = Math.min(16, Math.max(6, navigator.hardwareConcurrency || 8));
+const sessionVideoBackendPathCache = new Map<string, string>();
+
+const extractFramesWithBackend = async (
+  videoPath: string,
+  crop: { x: number; y: number; width: number; height: number },
+  tasks: CaptureTask[],
+  signal: AbortSignal
+) => {
+  const response = await fetch(resolveBackendUrl('/api/video/extract-frames'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      videoPath,
+      crop,
+      format: 'webp',
+      quality: Math.round(PROCESSING_WEBP_QUALITY * 100),
+      concurrency: FFMPEG_CONCURRENCY,
+      tasks: tasks.map((task) => ({
+        taskId: task.taskId,
+        requestedTime: task.requestedTime,
+      })),
+    }),
+    signal,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error((payload as { error?: string }).error || `FFmpeg request failed: ${response.status}`);
+  }
+  return payload as {
+    results: Array<{ taskId: number; requestedTime: number; capturedTime?: number; url: string }>;
+  };
+};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -124,8 +199,9 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
     const run = async () => {
       if (!videoRef.current || !canvasRef.current) return;
 
-      const useWebCodecs = supportsWebCodecs() && typeof OffscreenCanvas !== 'undefined';
-      const allExtractedFrames: ExtractedFrame[] = [];
+        const useWebCodecs = supportsWebCodecs() && typeof OffscreenCanvas !== 'undefined';
+        const allExtractedFrames: ExtractedFrame[] = [];
+        let measuredFps = ASSUMED_VIDEO_FPS;
 
       setProgress(p => ({ ...p, status: 'processing', message: '正在初始化...' }));
       onProgress?.({ current: 0, total: 100, message: '正在初始化...' });
@@ -161,6 +237,13 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
           videoLoadedRef.current    = true;
         }
 
+        try {
+          measuredFps = await estimateVideoFps(videoRef.current);
+        } catch (e) {
+          logger.warn('读取视频帧率失败，回退默认帧率:', e);
+          measuredFps = ASSUMED_VIDEO_FPS;
+        }
+
         // ── SRT 解析（缓存复用）──────────────────────────────────────────────────
         let srtSegments: SrtSegment[] = [];
         if (params.srtFile) {
@@ -179,11 +262,6 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
         if (signal.aborted) return;
 
         // ── 计算时间戳 ────────────────────────────────────────────────────────────
-        type CaptureTask = {
-          taskId: number;
-          requestedTime: number;
-          hasSubtitle: boolean;
-        };
         let captureTasks: CaptureTask[] = [];
         const start = Math.max(0, params.startTime);
         const end   = params.endTime > 0
@@ -206,8 +284,7 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
           const validSubs    = clip(srtSegments);
           const validNonSubs = clip(non_subtitle_segments);
 
-          const VIDEO_FPS    = 30;
-          const frameDuration = 1 / VIDEO_FPS;
+          const frameDuration = 1 / ASSUMED_VIDEO_FPS;
           const gapInterval =
             (params.srtNonSubtitleFrameInterval && params.srtNonSubtitleFrameInterval > 0
               ? params.srtNonSubtitleFrameInterval * frameDuration : undefined) ||
@@ -245,11 +322,13 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
           }));
 
         } else if (params.mode === ExtractionMode.FRAME) {
-          const count = Math.max(1, params.maxFrames);
-          const step  = (end - start) / count;
+          const frameStep = Math.max(1, Math.round(params.interval || 1));
+          const fps = measuredFps > 0 ? measuredFps : ASSUMED_VIDEO_FPS;
+          const step = frameStep / fps;
+          let i = 0;
           if (step > 0) {
-            for (let i = 0; i < count; i++) {
-              captureTasks.push({ taskId: i, requestedTime: start + i * step, hasSubtitle: false });
+            for (let t = start; t < end; t += step) {
+              captureTasks.push({ taskId: i++, requestedTime: t, hasSubtitle: false });
             }
           }
         } else {
@@ -264,18 +343,32 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
 
         // 按时间排序，顺序处理
         captureTasks.sort((a, b) => a.requestedTime - b.requestedTime);
-        const totalFrames = captureTasks.length;
+        let totalFrames = captureTasks.length;
+        const prepareMessage = params.mode === ExtractionMode.SRT
+          ? `已解析 SRT，准备截取 ${totalFrames} 帧...`
+          : `已生成截图时间点，准备截取 ${totalFrames} 帧...`;
+        setProgress(p => ({ ...p, current: 0, message: prepareMessage }));
+        onProgress?.({ current: 0, total: 100, message: prepareMessage });
 
         // ── 预配置 canvas 尺寸 ────────────────────────────────────────────────────
         const vRef = videoRef.current;
         const cRef = canvasRef.current;
-        const cropX = (roi.x      / 100) * vRef.videoWidth;
-        const cropY = (roi.y      / 100) * vRef.videoHeight;
-        const cropW = (roi.width  / 100) * vRef.videoWidth;
-        const cropH = (roi.height / 100) * vRef.videoHeight;
+        const cropX = Math.round((roi.x / 100) * vRef.videoWidth);
+        const cropY = Math.round((roi.y / 100) * vRef.videoHeight);
+        const cropW = Math.max(1, Math.round((roi.width / 100) * vRef.videoWidth));
+        const cropH = Math.max(1, Math.round((roi.height / 100) * vRef.videoHeight));
 
         cRef.width = cropW;
         cRef.height = cropH;
+        const canvasCtx = cRef.getContext('2d', {
+          alpha: false,
+          willReadFrequently: false,
+          desynchronized: true,
+        }) as CanvasRenderingContext2D | null;
+
+        if (!canvasCtx) {
+          throw new Error('无法创建 Canvas 上下文');
+        }
 
         // WebCodecs：创建 OffscreenCanvas
         let offscreen: OffscreenCanvas | null = null;
@@ -289,20 +382,99 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
         let processedCount = 0;
         let lastProgressUpdate = 0;
         const WEBP_QUALITY = PROCESSING_WEBP_QUALITY;
-        const modeLabel = useWebCodecs ? 'WebCodecs' : 'Canvas';
+        const browserModeLabel = useWebCodecs ? 'WebCodecs' : 'Canvas';
         const currentGroup = params.selectedGroup || 'group1';
+        const ffmpegCrop = { x: cropX, y: cropY, width: cropW, height: cropH };
 
-        const updateProgress = (processed: number, now: number) => {
+        const updateProgress = (processed: number, now: number, mode: 'ffmpeg' | 'browser') => {
           const percent   = Math.round((processed / totalFrames) * 100);
           const elapsed   = (now - t0) / 1000;
           const speed     = elapsed > 0 ? processed / elapsed : 0;
           const remaining = speed > 0 ? (totalFrames - processed) / speed : 0;
-          const speedText = speed >= 1 ? `${speed.toFixed(1)} 帧/秒` : `${(60 / speed).toFixed(1)} 秒/帧`;
+          const speedText = speed <= 0 ? '计算中' : speed >= 1 ? `${speed.toFixed(1)} 帧/秒` : `${(60 / speed).toFixed(1)} 秒/帧`;
           const remText   = remaining < 60 ? `剩余 ${Math.ceil(remaining)} 秒` : `剩余 ${Math.ceil(remaining / 60)} 分钟`;
-          const msg = `单线程${modeLabel}截取 (${processed}/${totalFrames}) - ${speedText} - ${remText}`;
+          const prefix = mode === 'ffmpeg' ? 'FFmpeg截取' : `单线程${browserModeLabel}截取`;
+          const msg = `${prefix} (${processed}/${totalFrames}) - ${speedText} - ${remText}`;
           setProgress(p => ({ ...p, current: percent, message: msg }));
           onProgress?.({ current: percent, total: 100, message: msg });
         };
+
+        let backendVideoPath = sessionVideoBackendPathCache.get(video.id) ?? video.localPath;
+        if (!backendVideoPath && video.file) {
+          try {
+            setProgress(p => ({ ...p, message: '正在上传视频到本地处理服务...' }));
+            onProgress?.({ current: 0, total: 100, message: '正在上传视频到本地处理服务...' });
+            backendVideoPath = await resolveBackendVideoPath(video.file, signal);
+            if (backendVideoPath) {
+              sessionVideoBackendPathCache.set(video.id, backendVideoPath);
+            }
+          } catch (error) {
+            logger.warn('上传视频到后端缓存失败，回退到浏览器截图流程:', error);
+          }
+        } else if (backendVideoPath) {
+          sessionVideoBackendPathCache.set(video.id, backendVideoPath);
+        }
+
+        if (backendVideoPath) {
+          try {
+            const ffmpegFrames: ExtractedFrame[] = [];
+            const completedTaskIds = new Set<number>();
+            for (let startIndex = 0; startIndex < captureTasks.length; startIndex += FFMPEG_BATCH_SIZE) {
+              if (signal.aborted) break;
+
+              const batch = captureTasks.slice(startIndex, startIndex + FFMPEG_BATCH_SIZE);
+              const payload = await extractFramesWithBackend(backendVideoPath, ffmpegCrop, batch, signal);
+              const resultMap = new Map(payload.results.map((item) => [item.taskId, item]));
+
+              for (const task of batch) {
+                const result = resultMap.get(task.taskId);
+                if (!result?.url) continue;
+                completedTaskIds.add(task.taskId);
+                const capturedTime = result.capturedTime ?? task.requestedTime;
+                const driftMs = Math.round((capturedTime - task.requestedTime) * 1000);
+                ffmpegFrames.push({
+                  id: `${video.id}_${currentGroup}_${runId}_${task.taskId}`,
+                  url: result.url,
+                  timestamp: formatTimestampDisplay(capturedTime),
+                  filename: generateFilename(capturedTime, task.hasSubtitle ? 'sub' : 'nosub', 'webp', currentGroup),
+                  videoName: video.name,
+                  group: currentGroup,
+                  requestedTime: task.requestedTime,
+                  capturedTime,
+                  driftMs,
+                });
+              }
+
+              processedCount = ffmpegFrames.length;
+              updateProgress(processedCount, Date.now(), 'ffmpeg');
+            }
+
+            if (!signal.aborted) {
+              allExtractedFrames.push(...ffmpegFrames);
+              const missingTasks = captureTasks.filter((task) => !completedTaskIds.has(task.taskId));
+              if (missingTasks.length === 0) {
+                setProgress(p => ({ ...p, status: 'done', current: 100, message: 'FFmpeg 截取完成！' }));
+                onProgress?.({ current: 100, total: 100, message: 'FFmpeg 截取完成！' });
+                onComplete(allExtractedFrames);
+                return;
+              }
+
+              logger.warn(`FFmpeg 漏返回 ${missingTasks.length} 帧，回退浏览器补截缺失帧`);
+              captureTasks = missingTasks;
+              totalFrames = captureTasks.length;
+              processedCount = 0;
+              lastProgressUpdate = 0;
+              setProgress(p => ({ ...p, current: 0, message: `FFmpeg 漏返回 ${missingTasks.length} 帧，正在补截...` }));
+              onProgress?.({ current: 0, total: 100, message: `FFmpeg 漏返回 ${missingTasks.length} 帧，正在补截...` });
+            }
+          } catch (error) {
+            logger.warn('FFmpeg 截取失败，回退到浏览器截图流程:', error);
+            setProgress(p => ({ ...p, current: 0, message: 'FFmpeg 截取失败，回退到浏览器截图...' }));
+            onProgress?.({ current: 0, total: 100, message: 'FFmpeg 截取失败，回退到浏览器截图...' });
+          }
+        } else {
+          logger.warn('未获取到视频本地路径，回退到浏览器截图流程');
+        }
 
         // ── 顺序处理所有帧 ────────────────────────────────────────────────────────
         for (const task of captureTasks) {
@@ -315,10 +487,8 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
             // 精确seek到目标时间
             capturedTime = await seekVideoToTime(vRef, task.requestedTime, 1000);
             
-            // 等待视频渲染
-            await new Promise(resolve => requestAnimationFrame(() => {
-              requestAnimationFrame(resolve);
-            }));
+            // 等待视频帧真正完成渲染，避免固定双 rAF 带来的额外延迟
+            await waitForVideoFrame(vRef);
 
             if (useWebCodecs && offscreen && offCtx) {
               // WebCodecs路径
@@ -335,14 +505,12 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
                 });
               } catch {
                 // 降级到Canvas
-                const ctx = cRef.getContext('2d', { alpha: false }) as CanvasRenderingContext2D;
-                ctx.drawImage(vRef, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+                canvasCtx.drawImage(vRef, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
                 dataUrl = cRef.toDataURL('image/webp', WEBP_QUALITY);
               }
             } else {
               // 普通Canvas路径
-              const ctx = cRef.getContext('2d', { alpha: false }) as CanvasRenderingContext2D;
-              ctx.drawImage(vRef, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+              canvasCtx.drawImage(vRef, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
               dataUrl = cRef.toDataURL('image/webp', WEBP_QUALITY);
             }
           } catch (err) {
@@ -371,7 +539,7 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({
             now - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL_MS
           ) {
             lastProgressUpdate = now;
-            updateProgress(processedCount, now);
+            updateProgress(processedCount, now, 'browser');
           }
         }
 

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { avatarMap, getAvatarPath } from '../utils/avatarMap';
+import { avatarCategories, avatarMap, getAvatarPath, normalizeAvatarName } from '../utils/avatarMap';
 import { X, Search, Star, Clock, Grid2x2, ZoomIn, ZoomOut, RotateCcw, Image as ImageIcon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ChevronUp } from 'lucide-react';
 import CompactGallery from './CompactGallery';
 import { ExtractedFrame, VideoFile, ROI } from '../types';
@@ -29,19 +29,36 @@ interface AvatarCategory {
 interface AvatarSubcategory {
   name: string;
   avatars: string[];
+  subcategories?: AvatarLeafCategory[];
+}
+
+interface AvatarLeafCategory {
+  name: string;
+  avatars: string[];
+}
+
+interface AvatarLocation {
+  category: string;
+  subcategory?: string;
+  leafSubcategory?: string;
 }
 
 const STORAGE_KEYS = {
   LAST_CATEGORY: 'avatarPicker_lastCategory',
   LAST_SUBCATEGORY: 'avatarPicker_lastSubcategory',
+  LAST_LEAF_SUBCATEGORY: 'avatarPicker_lastLeafSubcategory',
+  LAST_AVATAR: 'avatarPicker_lastAvatar',
   RECENT_AVATARS: 'avatarPicker_recentAvatars',
   FAVORITE_AVATARS: 'avatarPicker_favoriteAvatars'
 };
+
+const SPECIAL_CATEGORIES = ['全部', '最近使用', '我的收藏'] as const;
 
 interface RecentAvatar {
   name: string;
   timestamp: number;
 }
+
 
 const AvatarPicker: React.FC<AvatarPickerProps> = ({ 
   onSelect, 
@@ -58,8 +75,14 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string>('');
+  const [selectedLeafSubcategory, setSelectedLeafSubcategory] = useState<string>('');
+  // 当前展开的主分类，同一时间只允许一个
+  const [expandedCategory, setExpandedCategory] = useState<string>(() => {
+    return localStorage.getItem('avatarPicker_expandedCategory') || localStorage.getItem(STORAGE_KEYS.LAST_CATEGORY) || '';
+  });
   // 右侧预览栏当前悬停/点击的头像
   const [hoveredAvatar, setHoveredAvatar] = useState<string | null>(currentAvatar ?? null);
+  const avatarItemRefs = useRef(new Map<string, HTMLDivElement>());
   
   // 校对图片折叠状态（现在在中间区域下方）
   const [isProofreadCollapsed, setIsProofreadCollapsed] = useState(() => {
@@ -96,9 +119,12 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           if (typeof parsed[0] === 'string') {
-            return parsed.map((name: string) => ({ name, timestamp: Date.now() }));
+            return parsed.map((name: string) => ({ name: normalizeAvatarName(name), timestamp: Date.now() }));
           }
-          return parsed;
+          return parsed.map((item: RecentAvatar) => ({
+            ...item,
+            name: normalizeAvatarName(item.name),
+          }));
         }
       } catch (e) {
         handleError(e, undefined, { context: 'Failed to parse recent avatars' });
@@ -109,7 +135,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
 
   const [favoriteAvatars, setFavoriteAvatars] = useState<Set<string>>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.FAVORITE_AVATARS);
-    return new Set(saved ? JSON.parse(saved) : []);
+    return new Set((saved ? JSON.parse(saved) : []).map((avatarName: string) => normalizeAvatarName(avatarName)));
   });
 
   useEffect(() => {
@@ -129,42 +155,64 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   }, [selectedCategory]);
 
   useEffect(() => {
+    localStorage.setItem('avatarPicker_expandedCategory', expandedCategory);
+  }, [expandedCategory]);
+
+  useEffect(() => {
     if (selectedSubcategory) {
       localStorage.setItem(STORAGE_KEYS.LAST_SUBCATEGORY, selectedSubcategory);
     }
   }, [selectedSubcategory]);
 
   useEffect(() => {
-    const lastSubcategory = localStorage.getItem(STORAGE_KEYS.LAST_SUBCATEGORY);
-    if (lastSubcategory && selectedCategory !== '全部' && selectedCategory !== '最近使用' && selectedCategory !== '我的收藏') {
-      setSelectedSubcategory(lastSubcategory);
+    if (selectedLeafSubcategory) {
+      localStorage.setItem(STORAGE_KEYS.LAST_LEAF_SUBCATEGORY, selectedLeafSubcategory);
     }
-  }, [selectedCategory]);
+  }, [selectedLeafSubcategory]);
+
+  useEffect(() => {
+    const lastLeafSubcategory = localStorage.getItem(STORAGE_KEYS.LAST_LEAF_SUBCATEGORY);
+    if (lastLeafSubcategory && selectedCategory === '男主头像' && selectedSubcategory) {
+      setSelectedLeafSubcategory(lastLeafSubcategory);
+    }
+  }, [selectedCategory, selectedSubcategory]);
 
   const addToRecent = (avatarName: string) => {
+    const normalizedAvatarName = normalizeAvatarName(avatarName);
     const updated = [
-      { name: avatarName, timestamp: Date.now() },
-      ...recentAvatars.filter(a => a.name !== avatarName)
+      { name: normalizedAvatarName, timestamp: Date.now() },
+      ...recentAvatars.filter(a => a.name !== normalizedAvatarName)
     ].slice(0, 20);
     setRecentAvatars(updated);
     localStorage.setItem(STORAGE_KEYS.RECENT_AVATARS, JSON.stringify(updated));
   };
 
   const toggleFavorite = (avatarName: string) => {
+    const normalizedAvatarName = normalizeAvatarName(avatarName);
     const updated = new Set(favoriteAvatars);
-    if (updated.has(avatarName)) {
-      updated.delete(avatarName);
+    if (updated.has(normalizedAvatarName)) {
+      updated.delete(normalizedAvatarName);
     } else {
-      updated.add(avatarName);
+      updated.add(normalizedAvatarName);
     }
     setFavoriteAvatars(updated);
     localStorage.setItem(STORAGE_KEYS.FAVORITE_AVATARS, JSON.stringify([...updated]));
   };
 
   const handleSelectAvatar = (avatarName: string) => {
-    addToRecent(avatarName);
-    onSelect(avatarName);
+    const normalizedAvatarName = normalizeAvatarName(avatarName);
+    addToRecent(normalizedAvatarName);
+    localStorage.setItem(STORAGE_KEYS.LAST_AVATAR, normalizedAvatarName);
+    onSelect(normalizedAvatarName);
   };
+
+  const jumpToCategoryPath = useCallback((category: string, subcategory?: string, leafSubcategory?: string) => {
+    setIsCategoryCollapsed(false);
+    setSelectedCategory(category);
+    setExpandedCategory(category);
+    setSelectedSubcategory(subcategory ?? '');
+    setSelectedLeafSubcategory(leafSubcategory ?? '');
+  }, []);
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -174,113 +222,67 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  const categories = useMemo(() => {
-    const categoryMap: { [key: string]: { [key: string]: string[] } } = {};
+  const categories = useMemo(
+    () => avatarCategories as unknown as AvatarCategory[],
+    []
+  );
 
-    Object.keys(avatarMap).forEach(avatarName => {
-      const path = avatarMap[avatarName];
-      const parts = path.split('/');
-      const mainCategory = parts[0];
+  const avatarLocationMap = useMemo(() => {
+    const locationMap = new Map<string, AvatarLocation>();
 
-      if (!categoryMap[mainCategory]) categoryMap[mainCategory] = {};
+    categories.forEach((category) => {
+      category.avatars.forEach((avatarName) => {
+        locationMap.set(avatarName, { category: category.name });
+      });
 
-      if (parts.length > 2) {
-        const subCategory = parts[1];
-        if (!categoryMap[mainCategory][subCategory]) categoryMap[mainCategory][subCategory] = [];
-        categoryMap[mainCategory][subCategory].push(avatarName);
-      } else {
-        if (!categoryMap[mainCategory]['_root']) categoryMap[mainCategory]['_root'] = [];
-        categoryMap[mainCategory]['_root'].push(avatarName);
-      }
+      category.subcategories?.forEach((subcategory) => {
+        subcategory.avatars.forEach((avatarName) => {
+          locationMap.set(avatarName, {
+            category: category.name,
+            subcategory: subcategory.name,
+          });
+        });
+
+        subcategory.subcategories?.forEach((leafSubcategory) => {
+          leafSubcategory.avatars.forEach((avatarName) => {
+            locationMap.set(avatarName, {
+              category: category.name,
+              subcategory: subcategory.name,
+              leafSubcategory: leafSubcategory.name,
+            });
+          });
+        });
+      });
     });
 
-    const categoryOrder = ['广陵王头像', '密探头像', '男主头像', '其他头像', '立绘QQ人', '小头像QQ人'];
-    const guanglingSubcategoryOrder = [
-      '广陵王-基础', '广陵王-面纱', '广陵王-脏脸', '世子常服', '宗室常服',
-      '江东乔影', '内廷绣罗', '逆波上流', '巫女', '三国志绒绒版-联动'
-    ];
+    return locationMap;
+  }, [categories]);
 
-    const result: AvatarCategory[] = [];
-
-    categoryOrder.forEach(categoryName => {
-      if (categoryMap[categoryName]) {
-        const subcategoryMap = categoryMap[categoryName];
-        const allAvatars: string[] = [];
-        const subcategories: AvatarSubcategory[] = [];
-
-        if (categoryName === '广陵王头像') {
-          guanglingSubcategoryOrder.forEach(subName => {
-            if (subcategoryMap[subName]) {
-              subcategories.push({ name: subName, avatars: subcategoryMap[subName].sort() });
-              allAvatars.push(...subcategoryMap[subName]);
-            }
-          });
-          Object.keys(subcategoryMap).forEach(subName => {
-            if (subName !== '_root' && !guanglingSubcategoryOrder.includes(subName)) {
-              subcategories.push({ name: subName, avatars: subcategoryMap[subName].sort() });
-              allAvatars.push(...subcategoryMap[subName]);
-            }
-          });
-        } else if (categoryName === '密探头像') {
-          const humanAvatars: string[] = [];
-          Object.keys(subcategoryMap).forEach(subName => {
-            if (subName === '_root') {
-              humanAvatars.push(...subcategoryMap[subName]);
-              allAvatars.push(...subcategoryMap[subName]);
-            } else {
-              subcategories.push({ name: subName, avatars: subcategoryMap[subName].sort() });
-              allAvatars.push(...subcategoryMap[subName]);
-            }
-          });
-          if (humanAvatars.length > 0) {
-            subcategories.unshift({ name: '人物头像', avatars: humanAvatars.sort() });
-          }
-          const otherSubcategories = subcategories.slice(1);
-          otherSubcategories.sort((a, b) => a.name.localeCompare(b.name));
-          subcategories.splice(1, subcategories.length - 1, ...otherSubcategories);
-        } else {
-          Object.keys(subcategoryMap).forEach(subName => {
-            if (subName === '_root') {
-              allAvatars.push(...subcategoryMap[subName]);
-            } else {
-              subcategories.push({ name: subName, avatars: subcategoryMap[subName].sort() });
-              allAvatars.push(...subcategoryMap[subName]);
-            }
-          });
-          subcategories.sort((a, b) => a.name.localeCompare(b.name));
-        }
-
-        result.push({
-          name: categoryName,
-          avatars: allAvatars.sort(),
-          subcategories: subcategories.length > 0 ? subcategories : undefined
-        });
+  useEffect(() => {
+    const targetAvatarRaw = currentAvatar || localStorage.getItem(STORAGE_KEYS.LAST_AVATAR);
+    const targetAvatar = targetAvatarRaw ? normalizeAvatarName(targetAvatarRaw) : '';
+    if (targetAvatar) {
+      const location = avatarLocationMap.get(targetAvatar);
+      if (location) {
+        setSearchTerm('');
+        setSelectedCategory(location.category);
+        setExpandedCategory(location.category);
+        setSelectedSubcategory(location.subcategory ?? '');
+        setSelectedLeafSubcategory(location.leafSubcategory ?? '');
+        setHoveredAvatar(targetAvatar);
+        return;
       }
-    });
+    }
 
-    Object.keys(categoryMap).forEach(categoryName => {
-      if (!categoryOrder.includes(categoryName)) {
-        const subcategoryMap = categoryMap[categoryName];
-        const allAvatars: string[] = [];
-        const subcategories: AvatarSubcategory[] = [];
-        Object.keys(subcategoryMap).forEach(subName => {
-          if (subName === '_root') {
-            allAvatars.push(...subcategoryMap[subName]);
-          } else {
-            subcategories.push({ name: subName, avatars: subcategoryMap[subName].sort() });
-            allAvatars.push(...subcategoryMap[subName]);
-          }
-        });
-        result.push({
-          name: categoryName,
-          avatars: allAvatars.sort(),
-          subcategories: subcategories.length > 0 ? subcategories : undefined
-        });
-      }
-    });
+    const lastCategory = localStorage.getItem(STORAGE_KEYS.LAST_CATEGORY) || '全部';
+    const lastSubcategory = localStorage.getItem(STORAGE_KEYS.LAST_SUBCATEGORY) || '';
+    const lastLeafSubcategory = localStorage.getItem(STORAGE_KEYS.LAST_LEAF_SUBCATEGORY) || '';
 
-    return result;
-  }, []);
+    setSelectedCategory(lastCategory);
+    setExpandedCategory(SPECIAL_CATEGORIES.includes(lastCategory as (typeof SPECIAL_CATEGORIES)[number]) ? '' : lastCategory);
+    setSelectedSubcategory(lastSubcategory);
+    setSelectedLeafSubcategory(lastLeafSubcategory);
+  }, [currentAvatar, avatarLocationMap]);
 
   const filteredAvatars = useMemo(() => {
     let avatars: string[] = [];
@@ -291,13 +293,18 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
       const sortedRecent = [...recentAvatars].sort((a, b) => b.timestamp - a.timestamp);
       avatars = sortedRecent.map(a => a.name).filter(name => avatarMap[name]);
     } else if (selectedCategory === '我的收藏') {
-      avatars = [...favoriteAvatars].filter(name => avatarMap[name]);
+      avatars = Object.keys(avatarMap).filter(name => favoriteAvatars.has(name));
     } else {
       const category = categories.find(c => c.name === selectedCategory);
       if (category) {
         if (selectedSubcategory && category.subcategories) {
           const subcategory = category.subcategories.find(s => s.name === selectedSubcategory);
-          avatars = subcategory ? subcategory.avatars : [];
+          if (subcategory?.subcategories && selectedLeafSubcategory) {
+            const leafSubcategory = subcategory.subcategories.find(s => s.name === selectedLeafSubcategory);
+            avatars = leafSubcategory ? leafSubcategory.avatars : subcategory.avatars;
+          } else {
+            avatars = subcategory ? subcategory.avatars : [];
+          }
         } else {
           avatars = category.avatars;
         }
@@ -311,14 +318,29 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
       if (filtered.length === 0 && selectedCategory !== '全部') {
         return Object.keys(avatarMap).filter(name =>
           name.toLowerCase().includes(searchTerm.toLowerCase())
-        ).sort();
+        );
       }
-      return filtered.sort();
+      return filtered;
     }
 
     if (selectedCategory === '最近使用') return avatars;
-    return avatars.sort();
-  }, [selectedCategory, selectedSubcategory, searchTerm, categories, recentAvatars, favoriteAvatars]);
+    return avatars;
+  }, [selectedCategory, selectedSubcategory, selectedLeafSubcategory, searchTerm, categories, recentAvatars, favoriteAvatars]);
+
+  useEffect(() => {
+    const targetAvatarRaw = currentAvatar || localStorage.getItem(STORAGE_KEYS.LAST_AVATAR) || hoveredAvatar;
+    const targetAvatar = targetAvatarRaw ? normalizeAvatarName(targetAvatarRaw) : '';
+    if (!targetAvatar || !filteredAvatars.includes(targetAvatar)) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const targetElement = avatarItemRefs.current.get(targetAvatar);
+      targetElement?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentAvatar, hoveredAvatar, filteredAvatars, selectedCategory, selectedSubcategory, selectedLeafSubcategory]);
 
   const previewPath = hoveredAvatar ? getAvatarPath(hoveredAvatar) : null;
   const isPreviewFavorite = hoveredAvatar ? favoriteAvatars.has(hoveredAvatar) : false;
@@ -451,7 +473,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -459,28 +481,53 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="relative flex items-center px-5 py-2 border-b border-gray-200 bg-linear-to-r from-gray-50 to-white">
+        <div className="flex items-center gap-4 px-5 py-2 border-b border-gray-200 bg-linear-to-r from-gray-50 to-white">
           <h2 className="text-sm font-semibold text-gray-800 shrink-0">选择头像</h2>
-          <div className="absolute left-1/2 -translate-x-1/2 w-96">
-            <div className="relative group">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="搜索头像名称..."
-                className="w-full pl-10 pr-4 py-1.5 rounded-full border border-gray-200 bg-white text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 shadow-sm hover:shadow transition-all"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-                  title="清除"
-                >
-                  <X size={14} />
-                </button>
-              )}
+          <div className="flex-1 flex justify-center min-w-0">
+            <div className="w-full max-w-96">
+              <div className="relative group">
+                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="搜索头像名称..."
+                  className="w-full pl-10 pr-4 py-1.5 rounded-full border border-gray-200 bg-white text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 shadow-sm hover:shadow transition-all"
+                />
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    title="清除"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
             </div>
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin shrink-0">
+            <button
+              onClick={() => jumpToCategoryPath('广陵王头像', '广陵王-默认')}
+              className="px-2.5 py-1 rounded-full border border-blue-200 bg-blue-50 text-[11px] leading-none text-blue-600 hover:bg-blue-100 transition-colors whitespace-nowrap"
+              title="跳转到广陵王-默认"
+            >
+              广陵王
+            </button>
+            <button
+              onClick={() => jumpToCategoryPath('其他小头像汇总', '其他', '敌方NPC')}
+              className="px-2.5 py-1 rounded-full border border-amber-200 bg-amber-50 text-[11px] leading-none text-amber-700 hover:bg-amber-100 transition-colors whitespace-nowrap"
+              title="跳转到敌方NPC"
+            >
+              敌方NPC
+            </button>
+            <button
+              onClick={() => jumpToCategoryPath('其他小头像汇总', '其他', '剧情NPC')}
+              className="px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[11px] leading-none text-emerald-700 hover:bg-emerald-100 transition-colors whitespace-nowrap"
+              title="跳转到剧情NPC"
+            >
+              剧情NPC
+            </button>
           </div>
           <button
             onClick={onClose}
@@ -517,11 +564,12 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
               // 展开状态
               <>
                 {/* 标题栏 */}
-                <div className="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-700">分类</span>
+                <div className="px-4 py-2.5 border-b border-gray-200 flex items-center gap-2">
+                  <span className="text-xs font-medium text-gray-700 shrink-0">分类</span>
+                  <div className="ml-auto" />
                   <button
                     onClick={() => setIsCategoryCollapsed(true)}
-                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors shrink-0"
                     title="折叠面板"
                   >
                     <PanelLeftClose className="w-4 h-4" />
@@ -529,15 +577,15 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                 </div>
 
                 {/* 分类列表 */}
-                <div className="flex-1 overflow-y-auto">
-                  {[
+                <div className="flex-1 overflow-y-auto scrollbar-thin">
+                  {[ 
                     { label: '全部', count: Object.keys(avatarMap).length, key: '全部', icon: <Grid2x2 size={14} className="shrink-0" /> },
                     { label: '最近使用', count: recentAvatars.length, key: '最近使用', icon: <Clock size={14} className="shrink-0" /> },
                     { label: '我的收藏', count: favoriteAvatars.size, key: '我的收藏', icon: <Star size={14} className="shrink-0" fill={selectedCategory === '我的收藏' ? 'currentColor' : 'none'} /> },
                   ].map(({ label, count, key, icon }) => (
                     <div
                       key={key}
-                      onClick={() => { setSelectedCategory(key); setSelectedSubcategory(''); }}
+                      onClick={() => { setSelectedCategory(key); setSelectedSubcategory(''); setSelectedLeafSubcategory(''); }}
                       className={`flex items-center gap-2 px-4 py-2 cursor-pointer text-sm border-l-2 transition-colors ${
                         selectedCategory === key
                           ? 'bg-blue-50 text-blue-600 font-medium border-blue-500'
@@ -555,7 +603,28 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                   {categories.map(category => (
                     <div key={category.name}>
                       <div
-                        onClick={() => { setSelectedCategory(category.name); setSelectedSubcategory(''); }}
+                        onClick={() => {
+                          const isSpecial = ['全部', '最近使用', '我的收藏'].includes(category.name);
+                          if (!isSpecial) {
+                              const willExpand = expandedCategory !== category.name;
+                              setSelectedCategory(category.name);
+
+                              if (willExpand) {
+                              setSelectedSubcategory('');
+                              setSelectedLeafSubcategory('');
+                              setExpandedCategory(category.name);
+                            } else {
+                              setSelectedSubcategory('');
+                              setSelectedLeafSubcategory('');
+                              setExpandedCategory('');
+                            }
+                          } else {
+                            setSelectedCategory(category.name);
+                            setSelectedSubcategory('');
+                            setSelectedLeafSubcategory('');
+                            setExpandedCategory('');
+                          }
+                        }}
                         className={`flex items-center px-4 py-2 cursor-pointer text-sm border-l-2 transition-colors ${
                           selectedCategory === category.name && !selectedSubcategory
                             ? 'bg-blue-50 text-blue-600 font-medium border-blue-500'
@@ -564,23 +633,46 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                             : 'border-transparent text-gray-600 hover:bg-gray-100'
                         }`}
                       >
-                        <span className="truncate">{category.name}</span>
-                        <span className="ml-auto text-xs text-gray-400 shrink-0">({category.avatars.length})</span>
+                        <span className="truncate flex-1">{category.name}</span>
+                        <span className="text-xs text-gray-400 shrink-0">({category.avatars.length})</span>
                       </div>
-                      {selectedCategory === category.name && category.subcategories && (
+                      {expandedCategory === category.name && category.subcategories && (
                         <div className="bg-gray-100">
                           {category.subcategories.map(subcategory => (
-                            <div
-                              key={subcategory.name}
-                              onClick={() => setSelectedSubcategory(subcategory.name)}
-                              className={`flex items-center pl-8 pr-4 py-1.5 cursor-pointer text-xs border-l-2 transition-colors ${
-                                selectedSubcategory === subcategory.name
-                                  ? 'bg-blue-50 text-blue-600 border-blue-500'
-                                  : 'border-transparent text-gray-500 hover:bg-gray-200'
-                              }`}
-                            >
-                              <span className="truncate">{subcategory.name}</span>
-                              <span className="ml-auto text-xs text-gray-400 shrink-0">({subcategory.avatars.length})</span>
+                            <div key={subcategory.name}>
+                              <div
+                                onClick={() => {
+                                  setSelectedCategory(category.name);
+                                  setSelectedSubcategory(subcategory.name);
+                                  setSelectedLeafSubcategory('');
+                                }}
+                                className={`flex items-center pl-8 pr-4 py-1.5 cursor-pointer text-xs border-l-2 transition-colors ${
+                                  selectedSubcategory === subcategory.name
+                                    ? 'bg-blue-50 text-blue-600 border-blue-500'
+                                    : 'border-transparent text-gray-500 hover:bg-gray-200'
+                                }`}
+                              >
+                                <span className="truncate">{subcategory.name}</span>
+                                <span className="ml-auto text-xs text-gray-400 shrink-0">({subcategory.avatars.length})</span>
+                              </div>
+                              {selectedSubcategory === subcategory.name && subcategory.subcategories && (
+                                <div className="bg-gray-50">
+                                  {subcategory.subcategories.map((leafSubcategory) => (
+                                    <div
+                                      key={leafSubcategory.name}
+                                      onClick={() => setSelectedLeafSubcategory(leafSubcategory.name)}
+                                      className={`flex items-center pl-12 pr-4 py-1.5 cursor-pointer text-xs border-l-2 transition-colors ${
+                                        selectedLeafSubcategory === leafSubcategory.name
+                                          ? 'bg-indigo-50 text-indigo-600 border-indigo-500'
+                                          : 'border-transparent text-gray-500 hover:bg-gray-100'
+                                      }`}
+                                    >
+                                      <span className="truncate">{leafSubcategory.name}</span>
+                                      <span className="ml-auto text-xs text-gray-400 shrink-0">({leafSubcategory.avatars.length})</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -594,33 +686,39 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
 
           {/* 中间区域：头像网格 + 校对图片 */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* 头像网格 */}
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
               {filteredAvatars.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-sm text-gray-400">
                   未找到匹配的头像
                 </div>
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-3">
-                  {filteredAvatars.map(avatarName => {
+                  {filteredAvatars.map((avatarName) => {
                     const avatarPath = getAvatarPath(avatarName);
                     const isSelected = currentAvatar === avatarName;
-                    const isFavorite = favoriteAvatars.has(avatarName);
                     const isPreviewing = hoveredAvatar === avatarName;
 
                     return (
                       <div
                         key={avatarName}
+                        ref={(node) => {
+                          if (node) {
+                            avatarItemRefs.current.set(avatarName, node);
+                          } else {
+                            avatarItemRefs.current.delete(avatarName);
+                          }
+                        }}
                         onClick={() => setHoveredAvatar(avatarName)}
+                        onDoubleClick={() => handleSelectAvatar(avatarName)}
                         className={`group relative flex flex-col items-center gap-1 rounded-lg p-1.5 cursor-pointer transition-all ${
                           isSelected
                             ? 'border-2 border-blue-500 bg-blue-50 shadow-sm'
                             : isPreviewing
-                            ? 'border-2 border-indigo-400 bg-indigo-50 shadow-sm'
-                            : 'border border-gray-200 bg-white hover:border-blue-300 hover:-translate-y-0.5 hover:shadow-md'
+                              ? 'border-2 border-indigo-400 bg-indigo-50 shadow-sm'
+                              : 'border border-gray-200 bg-white hover:border-blue-300 hover:-translate-y-0.5 hover:shadow-md'
                         }`}
                       >
-                        {avatarPath && (
+                        {avatarPath ? (
                           <>
                             <div className="relative rounded-md overflow-hidden" style={{ width: '72px', height: '72px' }}>
                               <img
@@ -629,13 +727,16 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                                 className="w-full h-full object-cover transition-transform group-hover:scale-105"
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                               />
-                              {/* hover 遮罩 */}
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none rounded-md" />
                             </div>
                             <div className="w-full text-xs text-gray-500 text-center leading-tight line-clamp-2 break-all">
                               {avatarName}
                             </div>
                           </>
+                        ) : (
+                          <div className="w-full text-xs text-gray-400 text-center py-6">
+                            图片缺失
+                          </div>
                         )}
                       </div>
                     );
@@ -644,97 +745,54 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
               )}
             </div>
 
-            {/* 校对图片区域：外层 overflow-visible 让按钮可突出顶部边缘 */}
-            <div className="relative shrink-0 flex flex-col">
-              {/* 收起/展开 toggle 按钮：绝对定位在外层顶部中央，不受 overflow-hidden 裁切 */}
-              <button
-                onClick={() => setIsProofreadCollapsed(v => !v)}
-                className="absolute left-1/2 -translate-x-1/2 -top-3 z-20 flex items-center justify-center h-6 w-14 bg-white border border-gray-200 rounded-b-xl shadow-[0px_2px_8px_rgba(0,0,0,0.10)] hover:bg-indigo-50 hover:border-indigo-300 hover:shadow-[0px_2px_12px_rgba(99,102,241,0.18)] active:scale-95 transition-all duration-200 group"
-                title={isProofreadCollapsed ? '展开校对图片' : '收起校对图片'}
-              >
-                <ChevronUp
-                  style={{ transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}
-                  className={`w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-500 transition-colors duration-200 ${
-                    isProofreadCollapsed ? 'rotate-180' : 'rotate-0'
-                  }`}
-                />
-              </button>
-
-              {/* 折叠条：始终可见，高度固定 */}
-              <div className="border-t border-gray-200 bg-white h-10 flex items-center justify-center gap-2 shrink-0">
-                <ImageIcon
-                  size={13}
-                  style={{ transition: 'color 0.35s ease' }}
-                  className={isProofreadCollapsed ? 'text-gray-400' : 'text-indigo-400'}
-                />
-                <span
-                  style={{ transition: 'color 0.35s ease, font-weight 0.35s ease' }}
-                  className={`text-xs select-none tracking-widest ${isProofreadCollapsed ? 'text-gray-400' : 'text-indigo-500 font-medium'}`}
+            <div className="relative shrink-0 border-t border-gray-200 bg-white transition-all duration-300" style={{ height: isProofreadCollapsed ? COLLAPSED_PROOFREAD_HEIGHT : proofreadHeight + COLLAPSED_PROOFREAD_HEIGHT }}>
+              {/* 折叠/展开按钮 - 固定在顶部 */}
+              <div className="relative h-10 px-3 py-2 flex items-center justify-between gap-3 shrink-0 bg-white border-b border-gray-200">
+                <button
+                  onClick={() => setIsProofreadCollapsed((v) => !v)}
+                  className="flex items-center gap-2 min-w-0 hover:bg-gray-50 px-2 py-1 rounded transition-colors"
+                  title={isProofreadCollapsed ? '展开校对图片' : '收起校对图片'}
                 >
-                  校对图片
-                </span>
+                  <ChevronUp className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isProofreadCollapsed ? 'rotate-180' : 'rotate-0'}`} />
+                  <ImageIcon size={13} className={isProofreadCollapsed ? 'text-gray-400' : 'text-indigo-400'} />
+                  <span className={`text-xs tracking-widest ${isProofreadCollapsed ? 'text-gray-400' : 'text-indigo-500 font-medium'}`}>
+                    校对图片
+                  </span>
+                </button>
               </div>
 
-              {/* 内容区：grid 动画，cubic-bezier 弹性缓动 */}
-              <div
-                className="grid"
-                style={{
-                  gridTemplateRows: isProofreadCollapsed ? '0fr' : '1fr',
-                  transition: 'grid-template-rows 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
-                }}
-              >
-                <div className="overflow-hidden" style={{ minHeight: 0 }}>
-                  {/* 内容淡入淡出 */}
+              {/* 可展开的内容区域 */}
+              {!isProofreadCollapsed && (
+                <div className="relative bg-white" style={{ height: proofreadHeight }}>
                   <div
-                    style={{
-                      opacity: isProofreadCollapsed ? 0 : 1,
-                      transform: isProofreadCollapsed ? 'translateY(6px)' : 'translateY(0)',
-                      transition: isProofreadCollapsed
-                        ? 'opacity 0.2s ease, transform 0.2s ease'
-                        : 'opacity 0.3s ease 0.15s, transform 0.3s ease 0.15s',
-                    }}
+                    onMouseDown={handleProofreadResizeMouseDown}
+                    className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize z-10 group"
+                    title="拖动调整高度"
                   >
-                    {/* 固定高度内容容器，由 proofreadHeight 控制 */}
-                    <div
-                      className="relative bg-white"
-                      style={{ height: proofreadHeight }}
-                    >
-                      {/* 上方拖拽手柄 */}
-                      <div
-                        onMouseDown={handleProofreadResizeMouseDown}
-                        className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize z-10 group"
-                        title="拖动调整高度"
-                      >
-                        <div className="absolute inset-x-0 top-0 h-1 bg-transparent group-hover:bg-indigo-400 transition-colors" />
-                      </div>
-
-                      {/* 内容区域 */}
-                      <div className="h-full overflow-hidden">
-                        <CompactGallery
-                          frames={extractedFrames}
-                          onDelete={onDeleteFrames}
-                          onJumpToTime={onJumpToTime}
-                          activeVideo={activeVideo}
-                          videoSrc={videoSrc}
-                          sharedVideoRef={sharedVideoRef}
-                          roi={roi}
-                          onCaptureFrame={onCaptureFrame}
-                        />
-                      </div>
-                    </div>
+                    <div className="absolute inset-x-0 top-0 h-1 bg-transparent group-hover:bg-indigo-400 transition-colors" />
+                  </div>
+                  <div className="h-full overflow-hidden">
+                    <CompactGallery
+                      frames={extractedFrames}
+                      onDelete={onDeleteFrames}
+                      onJumpToTime={onJumpToTime}
+                      activeVideo={activeVideo}
+                      videoSrc={videoSrc}
+                      sharedVideoRef={sharedVideoRef}
+                      roi={roi}
+                      onCaptureFrame={onCaptureFrame}
+                    />
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
 
-          {/* 右侧预览栏 */}
           <div
             className="border-l border-gray-200 bg-gray-50 shrink-0 flex flex-col relative transition-all duration-300"
             style={{ width: isPreviewCollapsed ? COLLAPSED_PREVIEW_WIDTH : previewWidth }}
           >
             {isPreviewCollapsed ? (
-              // 折叠状态
               <div className="h-full flex flex-col items-center justify-start pt-6 px-2">
                 <button
                   onClick={() => setIsPreviewCollapsed(false)}
@@ -748,9 +806,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                 </div>
               </div>
             ) : (
-              // 展开状态
               <>
-                {/* 左侧拖拽手柄 */}
                 <div
                   onMouseDown={handlePreviewResizeMouseDown}
                   className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 group"
@@ -772,7 +828,6 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
 
                 {hoveredAvatar && previewPath ? (
                   <div className="flex flex-col items-center gap-4 p-4 flex-1 overflow-hidden">
-                    {/* 大图预览 */}
                     <div
                       ref={imgContainerRef}
                       onWheel={handleWheel}
@@ -791,10 +846,9 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                         }}
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                       />
-                      {/* 缩放控件 */}
                       <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg px-1.5 py-1 shadow-sm">
                         <button
-                          onClick={() => setZoom(z => Math.max(z / 1.3, 0.5))}
+                          onClick={() => setZoom((z) => Math.max(z / 1.3, 0.5))}
                           className="p-0.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors"
                           title="缩小"
                         >
@@ -804,7 +858,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                           {Math.round(zoom * 100)}%
                         </span>
                         <button
-                          onClick={() => setZoom(z => Math.min(z * 1.3, 8))}
+                          onClick={() => setZoom((z) => Math.min(z * 1.3, 8))}
                           className="p-0.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors"
                           title="放大"
                         >
@@ -812,49 +866,44 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                         </button>
                         <div className="w-px h-3 bg-gray-200 mx-0.5" />
                         <button
-                          onClick={() => { setZoom(1); setPanOffset({ x: 0, y: 0 }); }}
+                          onClick={() => {
+                            setZoom(1);
+                            setPanOffset({ x: 0, y: 0 });
+                          }}
                           className="p-0.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors"
                           title="重置"
                         >
                           <RotateCcw size={13} />
                         </button>
                       </div>
-                      {/* 滚轮提示 */}
-                      {zoom === 1 && (
-                        <div className="absolute top-2 left-1/2 -translate-x-1/2 text-xs text-gray-300 pointer-events-none whitespace-nowrap">
-                          滚轮缩放
-                        </div>
-                      )}
                     </div>
 
-                    {/* 名称 */}
                     <p className="text-sm font-medium text-gray-800 text-center leading-snug break-all">
                       {hoveredAvatar}
                     </p>
 
-                    {/* 操作按钮 */}
-                    <div className="flex flex-col gap-2 w-full">
+                    <div className="flex gap-2 w-full">
                       <button
                         onClick={() => handleSelectAvatar(hoveredAvatar)}
-                        className={`w-full py-2 rounded-lg text-sm font-medium transition-colors ${
+                        className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm ${
                           isPreviewSelected
-                            ? 'bg-blue-100 text-blue-600 border border-blue-300 cursor-default'
-                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                            ? 'bg-blue-100 text-blue-500 border border-blue-200 cursor-default'
+                            : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95 shadow-blue-200'
                         }`}
                         disabled={isPreviewSelected}
                       >
-                        {isPreviewSelected ? '当前使用中' : '选择此头像'}
+                        {isPreviewSelected ? '使用中' : '选择'}
                       </button>
                       <button
                         onClick={() => toggleFavorite(hoveredAvatar)}
-                        className={`w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5 transition-colors ${
+                        className={`flex-1 py-2 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 ${
                           isPreviewFavorite
-                            ? 'bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100'
-                            : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'
+                            ? 'bg-amber-400 text-white border border-amber-400 hover:bg-amber-500 shadow-amber-200'
+                            : 'bg-white text-gray-500 border border-gray-200 hover:border-amber-300 hover:text-amber-500 hover:bg-amber-50'
                         }`}
                       >
                         <Star size={13} fill={isPreviewFavorite ? 'currentColor' : 'none'} strokeWidth={2} />
-                        {isPreviewFavorite ? '取消收藏' : '收藏'}
+                        {isPreviewFavorite ? '已收藏' : '收藏'}
                       </button>
                     </div>
                   </div>

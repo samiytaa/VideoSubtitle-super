@@ -27,6 +27,11 @@ echo [INFO] npm:
 call npm -v
 echo.
 
+if defined ELECTRON_RUN_AS_NODE (
+  echo [INFO] Clearing ELECTRON_RUN_AS_NODE for web startup...
+  set "ELECTRON_RUN_AS_NODE="
+)
+
 if not exist "node_modules" (
   echo [INFO] Installing root dependencies...
   call npm install
@@ -50,12 +55,18 @@ if not exist "integrated\web2api\node_modules" (
   popd
 )
 
-echo [INFO] Starting services...
+echo [INFO] Starting web services...
 echo [INFO] Frontend: http://localhost:5173
 echo [INFO] API:      http://127.0.0.1:3000
 echo.
 
 start "" cmd /c "timeout /t 4 >nul && start http://localhost:5173"
 call npm run dev
+if errorlevel 1 (
+  echo.
+  echo [ERROR] Web services failed to start.
+  pause
+  exit /b 1
+)
 
 pause

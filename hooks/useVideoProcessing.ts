@@ -6,7 +6,7 @@ interface ProcessingProgress {
   current: number;
   total: number;
   message: string;
-  stage?: 'extracting' | 'deduplicating';
+  stage?: 'extracting' | 'extracting-dialogue' | 'extracting-location' | 'deduplicating';
 }
 
 interface NextStepInfo {
@@ -94,16 +94,19 @@ export const useVideoProcessing = () => {
     (progress: { current: number; total: number; message: string }) => {
       let enhancedMessage = progress.message;
       const activeGroup = processingGroupRef.current;
+      let stage: ProcessingProgress['stage'] = 'extracting';
       if (activeGroup === 'group1') {
         enhancedMessage = progress.message.includes('对话')
           ? progress.message
           : `截取对话 - ${progress.message}`;
+        stage = 'extracting-dialogue';
       } else if (activeGroup === 'group2') {
         enhancedMessage = progress.message.includes('地点')
           ? progress.message
           : `截取地点 - ${progress.message}`;
+        stage = 'extracting-location';
       }
-      setProcessingProgress({ ...progress, message: enhancedMessage, stage: 'extracting' });
+      setProcessingProgress({ ...progress, message: enhancedMessage, stage });
     },
     []
   );

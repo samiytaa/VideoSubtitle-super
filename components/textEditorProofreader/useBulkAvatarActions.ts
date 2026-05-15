@@ -1,4 +1,5 @@
 import type React from 'react';
+import { produce } from 'immer';
 import { Chapter } from './types';
 
 interface UseBulkAvatarActionsParams {
@@ -15,6 +16,48 @@ interface UseBulkAvatarActionsParams {
 }
 
 export const useBulkAvatarActions = (params: UseBulkAvatarActionsParams) => {
+  const getAffectedDialogueCount = () => params.selectedBlockIndices.size + params.selectedNestedKeys.size;
+
+  const updateChapterDialogues = (avatarStyle: string) => {
+    const currentChapter = params.chapters[params.currentChapterIndex];
+    if (!currentChapter) {
+      return params.chapters;
+    }
+
+    const nextBlocks = currentChapter.blocks.map((block, blockIndex) => {
+      if (params.selectedBlockIndices.has(blockIndex) && block.type === 'dialogue') {
+        return { ...block, avatarStyle };
+      }
+
+      if (block.type !== 'nested-choice-group') {
+        return block;
+      }
+
+      let nestedChanged = false;
+      const nextNestedOptions = (block.nestedOptions || []).map((option) => {
+        let optionChanged = false;
+        const nextOptionBlocks = option.blocks.map((nestedBlock, nestedBlockIndex) => {
+          const nestedKey = `${blockIndex}-${option.showIndex}-${nestedBlockIndex}`;
+          if (params.selectedNestedKeys.has(nestedKey) && nestedBlock.type === 'dialogue') {
+            optionChanged = true;
+            nestedChanged = true;
+            return { ...nestedBlock, avatarStyle };
+          }
+          return nestedBlock;
+        });
+
+        return optionChanged ? { ...option, blocks: nextOptionBlocks } : option;
+      });
+
+      return nestedChanged ? { ...block, nestedOptions: nextNestedOptions } : block;
+    });
+
+    const nextChapter = { ...currentChapter, blocks: nextBlocks };
+    return params.chapters.map((chapter, chapterIndex) =>
+      chapterIndex === params.currentChapterIndex ? nextChapter : chapter
+    );
+  };
+
   const toggleBlockSelection = (blockIndex: number, setSelectedBlockIndices: (value: Set<number>) => void) => {
     const newSelected = new Set<number>(params.selectedBlockIndices);
     if (newSelected.has(blockIndex)) newSelected.delete(blockIndex);
@@ -33,22 +76,17 @@ export const useBulkAvatarActions = (params: UseBulkAvatarActionsParams) => {
   };
 
   const batchSetAvatar = (avatarName: string) => {
-    const updatedChapters = [...params.chapters];
+    const affectedCount = getAffectedDialogueCount();
+    if (!avatarName || affectedCount === 0) {
+      return { affectedCount: 0, affectedCharacters: [] as string[] };
+    }
+
+    const updatedChapters = updateChapterDialogues(avatarName);
+
     const currentChapter = updatedChapters[params.currentChapterIndex];
-
-    params.selectedBlockIndices.forEach(index => {
-      const block = currentChapter.blocks[index];
-      if (block.type === 'dialogue') block.avatarStyle = avatarName;
-    });
-
-    params.selectedNestedKeys.forEach(key => {
-      const [gi, si, bi] = key.split('-').map(Number);
-      const groupBlock = currentChapter.blocks[gi];
-      if (groupBlock?.type === 'nested-choice-group') {
-        const opt = (groupBlock.nestedOptions || []).find(o => o.showIndex === si);
-        if (opt && opt.blocks[bi]?.type === 'dialogue') opt.blocks[bi].avatarStyle = avatarName;
-      }
-    });
+    if (!currentChapter) {
+      return { affectedCount: 0, affectedCharacters: [] as string[] };
+    }
 
     const updatedHistory = { ...params.characterAvatarHistory };
     const affectedChars = new Set<string>();
@@ -74,29 +112,26 @@ export const useBulkAvatarActions = (params: UseBulkAvatarActionsParams) => {
     params.setShowBatchAvatarPicker(false);
     params.clearSelections();
     params.exitMultiSelect();
+
+    return {
+      affectedCount,
+      affectedCharacters: Array.from(affectedChars)
+    };
   };
 
   const batchClearAvatar = () => {
-    if (params.selectedBlockIndices.size === 0 && params.selectedNestedKeys.size === 0) return;
-    const updatedChapters = [...params.chapters];
-    const currentChapter = updatedChapters[params.currentChapterIndex];
+    const affectedCount = getAffectedDialogueCount();
+    if (affectedCount === 0) {
+      return { affectedCount: 0 };
+    }
 
-    params.selectedBlockIndices.forEach(index => {
-      const block = currentChapter.blocks[index];
-      if (block.type === 'dialogue') block.avatarStyle = '';
-    });
-    params.selectedNestedKeys.forEach(key => {
-      const [gi, si, bi] = key.split('-').map(Number);
-      const groupBlock = currentChapter.blocks[gi];
-      if (groupBlock?.type === 'nested-choice-group') {
-        const opt = (groupBlock.nestedOptions || []).find(o => o.showIndex === si);
-        if (opt && opt.blocks[bi]?.type === 'dialogue') opt.blocks[bi].avatarStyle = '';
-      }
-    });
+    const updatedChapters = updateChapterDialogues('');
 
     params.commitChapters(updatedChapters);
     params.clearSelections();
     params.exitMultiSelect();
+
+    return { affectedCount };
   };
 
   return { toggleBlockSelection, toggleSelectAllDialogues, batchSetAvatar, batchClearAvatar };

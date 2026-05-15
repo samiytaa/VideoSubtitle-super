@@ -3,6 +3,7 @@ import { Film, Loader2, UploadCloud, X } from 'lucide-react';
 import { VideoFile } from '../types';
 import { useNotifier } from './Notifications';
 import { handleError } from '../utils/errorHandler';
+import { resolveVideoLocalPath } from '../utils/electronFileAccess';
 
 interface VideoUploaderProps {
   onUpload: (video: VideoFile) => void;
@@ -48,7 +49,9 @@ const VideoUploader: React.FC<VideoUploaderProps> = ({ onUpload, currentVideo })
     };
   }, []);
 
-  const getVideoMetadata = (file: File): Promise<VideoFile> => {
+  const getVideoMetadata = async (file: File): Promise<VideoFile> => {
+    const localPath = await resolveVideoLocalPath(file);
+
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
       const video = document.createElement('video');
@@ -61,6 +64,7 @@ const VideoUploader: React.FC<VideoUploaderProps> = ({ onUpload, currentVideo })
         resolve({
           id: Math.random().toString(36).substr(2, 9),
           file,
+          localPath,
           name: file.name,
           size: file.size,
           duration: video.duration,
@@ -76,6 +80,7 @@ const VideoUploader: React.FC<VideoUploaderProps> = ({ onUpload, currentVideo })
           resolve({
             id: Math.random().toString(36).substr(2, 9),
             file,
+            localPath,
             name: file.name,
             size: file.size,
             duration: video.duration,

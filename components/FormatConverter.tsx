@@ -3,16 +3,23 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNotifier } from './Notifications';
 import { convertTextMainline, convertTextMitan, reverseConvertText } from '../utils/textConversionUtils';
 
+const MODE_STORAGE_KEY = 'formatConverter_mode';
+const RECENT_TITLES_STORAGE_KEY = 'recentTitles';
+const MAX_RECENT_TITLES = 5;
+
 const FormatConverter: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [outputText, setOutputText] = useState('');
-  const [mode, setMode] = useState<'mitan' | 'mainline'>('mitan');
+  const [mode, setMode] = useState<'mitan' | 'mainline'>(() => {
+    const savedMode = localStorage.getItem(MODE_STORAGE_KEY);
+    return savedMode === 'mainline' ? 'mainline' : 'mitan';
+  });
   const [infoDialogOpen, setInfoDialogOpen] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const [chapterInput, setChapterInput] = useState('');
   const [recentTitles, setRecentTitles] = useState<string[]>(() => {
     try {
-      return JSON.parse(localStorage.getItem('recentTitles') || '[]');
+      return JSON.parse(localStorage.getItem(RECENT_TITLES_STORAGE_KEY) || '[]');
     } catch {
       return [];
     }
@@ -20,8 +27,12 @@ const FormatConverter: React.FC = () => {
   const { addToast } = useNotifier();
 
   useEffect(() => {
-    localStorage.setItem('recentTitles', JSON.stringify(recentTitles));
+    localStorage.setItem(RECENT_TITLES_STORAGE_KEY, JSON.stringify(recentTitles));
   }, [recentTitles]);
+
+  useEffect(() => {
+    localStorage.setItem(MODE_STORAGE_KEY, mode);
+  }, [mode]);
 
   const applyTitle = (title: string) => {
     const titleLine = `《${title}》`;
@@ -43,13 +54,13 @@ const FormatConverter: React.FC = () => {
     }
 
     applyTitle(title);
-    setRecentTitles((prev) => [title, ...prev.filter((item) => item !== title)].slice(0, 1));
+    setRecentTitles((prev) => [title, ...prev.filter((item) => item !== title)].slice(0, MAX_RECENT_TITLES));
     setTitleInput('');
   };
 
   const handleAddChapter = () => {
     const chapter = chapterInput.trim();
-    if (!chapter || Number.isNaN(Number(chapter))) {
+    if (!/^\d+$/.test(chapter) || Number(chapter) <= 0) {
       addToast('请输入章节数字', 'error');
       return;
     }
@@ -105,7 +116,7 @@ const FormatConverter: React.FC = () => {
       return;
     }
 
-    const result = reverseConvertText(outputText);
+    const result = reverseConvertText(outputText, mode);
     if (result.success) {
       setInputText(result.output);
       addToast('反推成功', 'success');

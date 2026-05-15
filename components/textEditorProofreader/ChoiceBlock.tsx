@@ -2,7 +2,7 @@ import React from 'react';
 import { getAvatarPath } from '../../utils/avatarMap';
 import AvatarPicker from '../AvatarPicker';
 import { ParsedBlock } from './types';
-import { getCharacterColor } from './textParserUtils';
+import { getCharacterColor, parseEditableBlocksText, serializeBlocksText } from './textParserUtils';
 import { ExtractedFrame, VideoFile, ROI } from '../../types';
 
 export interface ChoiceBlockProps {
@@ -37,6 +37,7 @@ export interface ChoiceBlockProps {
   onSetShowSubAvatarPicker: (v: boolean) => void;
   onUpdateChoiceOptions: (blockIndex: number, opts: { label: string; blocks: ParsedBlock[] }[]) => void;
   showConfirm: (opts: { title: string; message: string }) => Promise<boolean>;
+  showAlert: (message: string, title?: string) => void;
   // 校对图片相关props
   extractedFrames?: ExtractedFrame[];
   onDeleteFrames?: (ids: string[]) => void;
@@ -78,6 +79,7 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
   onSetShowSubAvatarPicker,
   onUpdateChoiceOptions,
   showConfirm,
+  showAlert,
   extractedFrames = [],
   onDeleteFrames,
   onJumpToTime,
@@ -89,6 +91,36 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
 }) => {
   const isHeaderEditing = editingChoiceBlockIndex === index;
   const opts = isHeaderEditing ? editingChoiceOptions : (block.choiceOptions || []);
+  const [rawEditingOptionIndex, setRawEditingOptionIndex] = React.useState<number | null>(null);
+  const [rawEditingText, setRawEditingText] = React.useState('');
+
+  React.useEffect(() => {
+    setRawEditingOptionIndex(null);
+    setRawEditingText('');
+  }, [index, block.choiceOptions, editingChoiceBlockIndex]);
+
+  const applyOptionBlocksUpdate = (optIdx: number, nextBlocks: ParsedBlock[]) => {
+    const source = isHeaderEditing ? editingChoiceOptions : (block.choiceOptions || []);
+    const next = source.map((opt, idx) => idx === optIdx ? { ...opt, blocks: nextBlocks } : opt);
+    onUpdateChoiceOptions(index, next);
+    if (isHeaderEditing) onSetEditingChoiceOptions(next);
+  };
+
+  const startRawEditing = (optIdx: number, blocks: ParsedBlock[]) => {
+    setRawEditingOptionIndex(optIdx);
+    setRawEditingText(serializeBlocksText(blocks));
+  };
+
+  const saveRawEditing = (optIdx: number) => {
+    const parsed = parseEditableBlocksText(rawEditingText);
+    if (parsed.error) {
+      showAlert(parsed.error, '原文解析失败');
+      return;
+    }
+    applyOptionBlocksUpdate(optIdx, parsed.blocks);
+    setRawEditingOptionIndex(null);
+    setRawEditingText('');
+  };
 
   const renderOptionBlocks = () =>
     opts.map((opt, optIdx) => {
@@ -99,7 +131,7 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
       return (
         <div
           key={optIdx}
-          className={`rounded border overflow-hidden transition-all ${isSelected ? 'border-amber-500 shadow-md' : 'border-amber-300'} ${isDimmed ? 'opacity-40' : ''}`}
+          className={`rounded border overflow-visible transition-all ${isSelected ? 'border-amber-500 shadow-md' : 'border-amber-300'} ${isDimmed ? 'opacity-40' : ''}`}
           style={{ backgroundColor: isSelected ? '#f5e6c8' : '#e8e8e0' }}
         >
           {/* 选项标题行 */}
@@ -146,7 +178,40 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
 
           {/* 选项内部 blocks */}
           <div className="p-1.5 space-y-1">
-            {opt.blocks.map((sub, subIdx) => {
+            <div className="flex justify-end">
+              {rawEditingOptionIndex === optIdx ? (
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => saveRawEditing(optIdx)}
+                    className="px-2 py-0.5 bg-green-600 text-white rounded text-xs hover:bg-green-700"
+                  >保存原文</button>
+                  <button
+                    onClick={() => {
+                      setRawEditingOptionIndex(null);
+                      setRawEditingText('');
+                    }}
+                    className="px-2 py-0.5 bg-gray-500 text-white rounded text-xs hover:bg-gray-600"
+                  >取消</button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => startRawEditing(optIdx, opt.blocks)}
+                  className="px-2 py-0.5 bg-stone-200 text-stone-700 rounded text-xs hover:bg-stone-300"
+                >编辑原文</button>
+              )}
+            </div>
+            {rawEditingOptionIndex === optIdx && (
+              <div className="space-y-1">
+                <textarea
+                  value={rawEditingText}
+                  onChange={(e) => setRawEditingText(e.target.value)}
+                  className="w-full min-h-[120px] px-2 py-1.5 border border-amber-300 rounded text-xs font-mono resize-vertical bg-white text-gray-900"
+                  placeholder="直接编辑该选项对应的模板原文，例如：{{对话|角色|内容}}"
+                />
+                <div className="text-[11px] text-gray-500">{'支持直接粘贴 {{旁白}}、{{对话}}、{{分歧}}、{{嵌套分歧}} 模板。'}</div>
+              </div>
+            )}
+            {rawEditingOptionIndex !== optIdx && opt.blocks.map((sub, subIdx) => {
               const isSubEditing = editingSubBlock?.optIdx === optIdx && editingSubBlock?.subIdx === subIdx;
               const subMenuId = `sub-insert-${index}-${optIdx}-${subIdx}`;
 
@@ -316,17 +381,19 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
               }
               return null;
             })}
-            <button
-              onClick={() => onInsertSubBlock(index, optIdx, opt.blocks.length - 1, 'dialogue')}
-              className="w-full py-1 border border-dashed border-gray-400 text-gray-500 text-xs rounded hover:bg-gray-100"
-            >＋ 添加内容</button>
+            {rawEditingOptionIndex !== optIdx && (
+              <button
+                onClick={() => onInsertSubBlock(index, optIdx, opt.blocks.length - 1, 'dialogue')}
+                className="w-full py-1 border border-dashed border-gray-400 text-gray-500 text-xs rounded hover:bg-gray-100"
+              >＋ 添加内容</button>
+            )}
           </div>
         </div>
       );
     });
 
   return (
-    <div ref={blockRef} className="mb-1.5 rounded-lg border-2 border-amber-400 overflow-hidden">
+    <div ref={blockRef} className="mb-1.5 rounded-lg border-2 border-amber-400 overflow-visible">
       <div className="px-3 py-1.5 bg-amber-400 text-white text-xs font-bold flex items-center justify-between">
         <span>分歧选项</span>
         <div className="flex gap-1">

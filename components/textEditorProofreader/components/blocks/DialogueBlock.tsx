@@ -13,12 +13,13 @@ const DialogueBlockItem = React.memo(({ block, index, blockKey }: BasicBlockItem
   const isSelected = editor.editingState.selectedBlockIndices.has(index);
   const isMultiSelectMode = editor.editingState.isMultiSelectMode;
   const characterColor = getCharacterColor(block.character || '', block.customColor);
+  const isInsertMenuOpen = editor.menuState.activeInsertMenuIndex === index;
 
   return (
     <div
       key={index}
       ref={(el) => editor.actions.setBlockRef(blockKey, el)}
-      className={`group relative bg-white border px-4 py-3 mb-1.5 rounded-lg text-sm leading-relaxed flex gap-3 items-start cursor-pointer transition-all hover:shadow-md ${isEditing ? 'ring-2 ring-indigo-500' : ''} ${isSelected ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}
+      className={`group relative z-0 overflow-visible bg-white border px-4 py-3 mb-2.5 last:mb-0 rounded-lg text-sm leading-relaxed flex gap-3 items-start cursor-pointer transition-all hover:shadow-md hover:z-20 ${isInsertMenuOpen ? 'z-30' : ''} ${isEditing ? 'ring-2 ring-indigo-500' : ''} ${isSelected ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}
       style={{ borderColor: isSelected ? '#3b82f6' : characterColor }}
       onClick={() => {
         if (isMultiSelectMode) editor.actions.toggleBlockSelection(index);
@@ -112,7 +113,7 @@ const DialogueBlockItem = React.memo(({ block, index, blockKey }: BasicBlockItem
               <button onClick={async (e) => { e.stopPropagation(); await editor.actions.deleteDialogueBlock(index); }} className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors" title="删除">✕</button>
             </div>
             <InsertMenu
-              isOpen={editor.menuState.activeInsertMenuIndex === index}
+              isOpen={isInsertMenuOpen}
               onClose={editor.actions.closeInsertMenu}
               onInsert={(type) => editor.actions.insertBlockFromMenu(index, type)}
             />

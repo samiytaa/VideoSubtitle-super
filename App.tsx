@@ -16,6 +16,7 @@ import { useFrameManagement, useVideoProcessing, useDeduplication } from './hook
 import { handleError } from './utils/errorHandler';
 import { DEFAULT_MERGE_BATCH_SIZE } from './config/constants';
 import { confirmDelete } from './utils/confirmActions';
+import { resolveVideoLocalPath } from './utils/electronFileAccess';
 import { getCurrentRoutePath, syncHashRoute } from './utils/runtimeConfig';
 
 type Tab = AppTab;
@@ -83,6 +84,12 @@ const AppContent: React.FC = () => {
     pendingDeduplication: null,
   });
   const { activeTab, pendingDeduplication } = state;
+  const mainLayoutClass =
+    activeTab === 'proofread2'
+      ? 'min-h-0 overflow-hidden'
+      : activeTab === 'gallery'
+        ? 'px-0 py-0'
+        : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6';
 
   // Refs for scrolling
   const sectionUploadRef = useRef<HTMLDivElement>(null);
@@ -200,6 +207,8 @@ const AppContent: React.FC = () => {
       if (shouldClear) {
         frameManagement.setExtractedFrames([]);
         await new Promise((resolve) => setTimeout(resolve, 100));
+      } else {
+        return;
       }
     }
 
@@ -267,7 +276,6 @@ const AppContent: React.FC = () => {
           buildParams('group1', useSrt && (skipSubtitleDialogue ?? false), false),
           false
         );
-        frameManagement.setExtractedFrames([]);
         notifier.addToast('正在处理对话截图...', 'info');
       }
     } else {
@@ -295,7 +303,6 @@ const AppContent: React.FC = () => {
         buildParams(captureType === 'dialogue' ? 'group1' : 'group2', skipSub, autoDedup),
         false
       );
-      frameManagement.setExtractedFrames([]);
       notifier.addToast(
         `已一键处理${captureType === 'dialogue' ? '对话' : '地点'}截图${useSrt ? '' : '（固定帧间隔）'}`,
         'success'
@@ -513,7 +520,9 @@ const AppContent: React.FC = () => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
 
-      const getVideoMetadata = (sourceFile: File): Promise<VideoFile> => {
+      const getVideoMetadata = async (sourceFile: File): Promise<VideoFile> => {
+        const localPath = await resolveVideoLocalPath(sourceFile);
+
         return new Promise((resolve, reject) => {
           const url = URL.createObjectURL(sourceFile);
           const video = document.createElement('video');
@@ -525,6 +534,7 @@ const AppContent: React.FC = () => {
             resolve({
               id: Math.random().toString(36).substr(2, 9),
               file: sourceFile,
+              localPath,
               name: sourceFile.name,
               size: sourceFile.size,
               duration: video.duration,
@@ -539,6 +549,7 @@ const AppContent: React.FC = () => {
               resolve({
                 id: Math.random().toString(36).substr(2, 9),
                 file: sourceFile,
+                localPath,
                 name: sourceFile.name,
                 size: sourceFile.size,
                 duration: video.duration,
@@ -583,7 +594,7 @@ const AppContent: React.FC = () => {
     <>
       <LoadingOverlay visible={!frameManagement.isDataLoaded} />
 
-      <div className="min-h-screen flex flex-col bg-slate-50">
+      <div className={`${activeTab === 'proofread2' ? 'h-screen overflow-hidden' : 'min-h-screen'} flex flex-col bg-slate-50`}>
         <AppHeader
           activeTab={activeTab}
           isProcessing={videoProcessing.isProcessing}
@@ -591,9 +602,7 @@ const AppContent: React.FC = () => {
           isAiChatProcessing={oneClickProgress.isLoading}
         />
 
-        <main
-          className={`grow w-full ${activeTab === 'proofread2' ? '' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6'}`}
-        >
+        <main className={`grow w-full ${mainLayoutClass}`}>
           {activeTab === 'extract' && (
             <ExtractTab
               sectionUploadRef={sectionUploadRef}
@@ -602,8 +611,6 @@ const AppContent: React.FC = () => {
               videoSrc={videoProcessing.videoSrc}
               isProcessing={videoProcessing.isProcessing}
               processingProgress={videoProcessing.processingProgress}
-              paramsStartTime={videoProcessing.params.startTime}
-              paramsEndTime={videoProcessing.params.endTime}
               videoElementRef={videoElementRef}
               onRoiSet={videoProcessing.handleRoiSet}
               onFrameCaptured={frameManagement.handleFrameCaptured}
@@ -673,13 +680,13 @@ const AppContent: React.FC = () => {
             />
           )}
 
-          <div className={activeTab === 'aichat' ? '' : 'hidden'}>
+          {activeTab === 'aichat' && (
             <AiChatTab
               mergedImages={frameManagement.mergedImages}
               onOneClickRecognize={handleOneClickRecognize}
               oneClickProgress={oneClickProgress}
             />
-          </div>
+          )}
         </main>
       </div>
     </>

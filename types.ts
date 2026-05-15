@@ -2,6 +2,7 @@
 export interface VideoFile {
   id: string;
   file: File;
+  localPath?: string;
   name: string;
   size: number;
   duration: number;

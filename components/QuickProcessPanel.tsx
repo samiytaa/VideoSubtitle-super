@@ -2,58 +2,27 @@ import { Scan, Upload } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { RoiPreset, VideoFile } from '../types';
 import { useNotifier } from './Notifications';
-
-const DEFAULT_PRESETS: Record<string, RoiPreset> = {
-  '【对话】': { name: '【对话】', x_ratio: 0, y_ratio: 0.8275, w_ratio: 0.54, h_ratio: 0.160625, description: 'X=0, Y=1324, 宽度=864, 高度=257', isDefault: true, category: 'dialogue' },
-  '【地点】': { name: '【地点】', x_ratio: 0.446875, y_ratio: 0.23625, w_ratio: 0.06125, h_ratio: 0.345625, description: 'X=715, Y=378, 宽度=98, 高度=553', isDefault: false, category: 'location' },
-};
-
-const loadPresets = (): Record<string, RoiPreset> => {
-  try {
-    const saved = localStorage.getItem('roi_presets');
-    if (saved) {
-      const parsed = JSON.parse(saved) as Record<string, RoiPreset>;
-      return { ...DEFAULT_PRESETS, ...parsed };
-    }
-  } catch { /* ignore */ }
-  return DEFAULT_PRESETS;
-};
-
-// ── 面板选项持久化 ────────────────────────────────────────────────────────────
-
-const PANEL_PREFS_KEY = 'quick_process_prefs';
-
-interface PanelPrefs {
-  captureDialogue: boolean;
-  captureLocation: boolean;
-  selectedDialoguePreset: string;
-  selectedLocationPreset: string;
-  autoDeduplicationDialogue: boolean;
-  autoDeduplicationLocation: boolean;
-  skipSubtitleDialogue: boolean;
-  skipSubtitleLocation: boolean;
-  frameInterval: number;
-}
-
-const loadPanelPrefs = (): Partial<PanelPrefs> => {
-  try {
-    const saved = localStorage.getItem(PANEL_PREFS_KEY);
-    if (saved) return JSON.parse(saved) as Partial<PanelPrefs>;
-  } catch { /* ignore */ }
-  return {};
-};
-
-const savePanelPrefs = (prefs: PanelPrefs) => {
-  try {
-    localStorage.setItem(PANEL_PREFS_KEY, JSON.stringify(prefs));
-  } catch { /* ignore */ }
-};
+import {
+  getDefaultQuickProcessPrefs,
+  loadQuickProcessPrefs,
+  QuickProcessPrefs,
+  subscribeQuickProcessPrefs,
+  updateQuickProcessPrefs,
+} from '../utils/quickProcessPrefs';
+import { loadRoiPresets, subscribeRoiPresets } from '../utils/roiPresetStore';
 
 export interface QuickProcessPanelProps {
   video: VideoFile | null;
+  srtFile: File | null;
+  onSrtFileChange: (file: File | null) => void;
   timeRange: { startTime: number; endTime: number };
   isProcessing: boolean;
-  progress?: { current: number; total: number; message: string; stage?: 'extracting' | 'deduplicating' };
+  progress?: {
+    current: number;
+    total: number;
+    message: string;
+    stage?: 'extracting' | 'extracting-dialogue' | 'extracting-location' | 'deduplicating';
+  };
   onConfirm: (
     file: File | null,
     dialoguePreset: RoiPreset | null,
@@ -70,29 +39,33 @@ export interface QuickProcessPanelProps {
 
 const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
   video,
+  srtFile,
+  onSrtFileChange,
   timeRange,
   isProcessing,
   progress,
   onConfirm,
 }) => {
   const notifier = useNotifier();
-  const [presets] = useState<Record<string, RoiPreset>>(loadPresets);
+  const [presets, setPresets] = useState<Record<string, RoiPreset>>(loadRoiPresets);
 
   // 读取上次保存的偏好
-  const savedPrefs = useMemo(() => loadPanelPrefs(), []);
+  const savedPrefs = useMemo(() => ({
+    ...getDefaultQuickProcessPrefs(),
+    ...loadQuickProcessPrefs(),
+  }), []);
 
-  const [srtFile, setSrtFile] = useState<File | null>(null);
   const [captureDialogue, setCaptureDialogue] = useState(() => savedPrefs.captureDialogue ?? true);
   const [captureLocation, setCaptureLocation] = useState(() => savedPrefs.captureLocation ?? true);
   const [selectedDialoguePreset, setSelectedDialoguePreset] = useState<string>(() => {
     // 优先用上次记忆的选择，其次用默认预设，最后用第一个
     if (savedPrefs.selectedDialoguePreset) return savedPrefs.selectedDialoguePreset;
-    const p = Object.values(loadPresets()).filter(p => p.category === 'dialogue' || p.name.includes('对话'));
+    const p = Object.values(loadRoiPresets()).filter(p => p.category === 'dialogue' || p.name.includes('对话'));
     return p.find(x => x.isDefault)?.name ?? p[0]?.name ?? '';
   });
   const [selectedLocationPreset, setSelectedLocationPreset] = useState<string>(() => {
     if (savedPrefs.selectedLocationPreset) return savedPrefs.selectedLocationPreset;
-    const p = Object.values(loadPresets()).filter(p => p.category === 'location' || p.name.includes('地点'));
+    const p = Object.values(loadRoiPresets()).filter(p => p.category === 'location' || p.name.includes('地点'));
     return p.find(x => x.isDefault)?.name ?? p[0]?.name ?? '';
   });
   const [autoDeduplicationDialogue, setAutoDeduplicationDialogue] = useState(() => savedPrefs.autoDeduplicationDialogue ?? false);
@@ -102,8 +75,8 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
   const [skipSubtitleLocation, setSkipSubtitleLocation] = useState(() => savedPrefs.skipSubtitleLocation ?? true);
 
   // 每次任意选项变化时自动保存
-  const persistPrefs = (patch: Partial<PanelPrefs>) => {
-    const current: PanelPrefs = {
+  const persistPrefs = (patch: Partial<QuickProcessPrefs>) => {
+    const current: QuickProcessPrefs = {
       captureDialogue,
       captureLocation,
       selectedDialoguePreset,
@@ -115,8 +88,28 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
       frameInterval,
       ...patch,
     };
-    savePanelPrefs(current);
+    updateQuickProcessPrefs(current);
   };
+
+  React.useEffect(() => {
+    return subscribeQuickProcessPrefs((prefs) => {
+      if (typeof prefs.captureDialogue === 'boolean') setCaptureDialogue(prefs.captureDialogue);
+      if (typeof prefs.captureLocation === 'boolean') setCaptureLocation(prefs.captureLocation);
+      if (typeof prefs.selectedDialoguePreset === 'string') setSelectedDialoguePreset(prefs.selectedDialoguePreset);
+      if (typeof prefs.selectedLocationPreset === 'string') setSelectedLocationPreset(prefs.selectedLocationPreset);
+      if (typeof prefs.autoDeduplicationDialogue === 'boolean') setAutoDeduplicationDialogue(prefs.autoDeduplicationDialogue);
+      if (typeof prefs.autoDeduplicationLocation === 'boolean') setAutoDeduplicationLocation(prefs.autoDeduplicationLocation);
+      if (typeof prefs.skipSubtitleDialogue === 'boolean') setSkipSubtitleDialogue(prefs.skipSubtitleDialogue);
+      if (typeof prefs.skipSubtitleLocation === 'boolean') setSkipSubtitleLocation(prefs.skipSubtitleLocation);
+      if (typeof prefs.frameInterval === 'number') setFrameInterval(prefs.frameInterval);
+    });
+  }, []);
+
+  React.useEffect(() => {
+    return subscribeRoiPresets((nextPresets) => {
+      setPresets(nextPresets);
+    });
+  }, []);
 
   const dialoguePresets = useMemo(
     () => Object.values(presets).filter((p): p is RoiPreset => (p as RoiPreset).category === 'dialogue' || (p as RoiPreset).name.includes('对话')),
@@ -165,21 +158,15 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
 
   return (
     <div>
-      {/* 三列横向等分布局，每列独立卡片 */}
-      <div className="flex gap-3 px-4 py-3">
-
-        {/* ── 第一列：SRT 文件卡片 ── */}
-        <div className="flex-1 bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
-          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/60 flex items-center gap-2">
-            <h4 className="text-xs font-semibold text-gray-600">上传 SRT 字幕文件</h4>
-            <span className="text-xs font-normal text-gray-400">（可选）</span>
-          </div>
-          <div className="p-4 flex flex-col gap-3 flex-1">
-            <div className="border-2 border-dashed border-gray-200 rounded-lg p-3 hover:border-indigo-400 hover:bg-indigo-50/20 transition-colors cursor-pointer relative flex-1">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="p-4 space-y-4">
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-gray-500">上传 SRT 字幕文件</div>
+            <div className="border-2 border-dashed border-gray-200 rounded-lg p-3 hover:border-indigo-400 hover:bg-indigo-50/20 transition-colors cursor-pointer relative">
               <input
                 type="file"
                 accept=".srt"
-                onChange={e => setSrtFile(e.target.files?.[0] ?? null)}
+                onChange={e => onSrtFileChange(e.target.files?.[0] ?? null)}
                 className="absolute inset-0 opacity-0 cursor-pointer z-10"
                 disabled={isProcessing}
               />
@@ -194,7 +181,7 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
                 {srtFile && (
                   <button
                     type="button"
-                    onClick={e => { e.stopPropagation(); setSrtFile(null); }}
+                    onClick={e => { e.stopPropagation(); onSrtFileChange(null); }}
                     className="z-20 relative p-1 text-gray-400 hover:text-red-500 transition-colors shrink-0"
                     disabled={isProcessing}
                   >
@@ -206,242 +193,208 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
               </div>
             </div>
           </div>
-        </div>
 
-        {/* ── 第二列：对话卡片 ── */}
-        <div className={`flex-1 bg-white border rounded-xl shadow-sm overflow-hidden flex flex-col transition-all ${captureDialogue ? 'border-blue-200' : 'border-gray-200 opacity-60'}`}>
-          <div className={`px-4 py-3 border-b flex items-center gap-2 ${captureDialogue ? 'bg-blue-50 border-blue-100' : 'bg-gray-50 border-gray-100'}`}>
-            <label className="flex items-center gap-2 cursor-pointer flex-1">
-              <input
-                type="checkbox"
-                checked={captureDialogue}
-                onChange={e => { setCaptureDialogue(e.target.checked); persistPrefs({ captureDialogue: e.target.checked }); }}
-                disabled={isProcessing}
-                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
-              />
-              <span className={`text-sm font-semibold ${captureDialogue ? 'text-blue-700' : 'text-gray-500'}`}>对话</span>
-            </label>
+          <div className="text-xs text-gray-500">
+            当前将按已勾选分类执行：{captureDialogue && captureLocation ? '对话 + 地点' : captureDialogue ? '仅对话' : captureLocation ? '仅地点' : '未选择'}
           </div>
-          <div className={`p-4 flex flex-col gap-3 flex-1 ${!captureDialogue && 'bg-gray-50/50'}`}>
-            {/* 坐标预设 */}
-            {dialoguePresets.length === 0 ? (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 text-xs text-yellow-800">没有可用的「对话」预设</div>
-            ) : (
-              <div className="overflow-y-auto max-h-16">
-                <div className="grid grid-cols-3 gap-1">
-                  {dialoguePresets.map(p => {
-                    const checked = selectedDialoguePreset === p.name;
-                    return (
-                      <label key={p.name} title={p.description} className={`flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border cursor-pointer transition-all text-center ${checked ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'}`}>
-                        <input type="radio" className="sr-only" checked={checked} onChange={() => { setSelectedDialoguePreset(p.name); persistPrefs({ selectedDialoguePreset: p.name }); }} disabled={isProcessing} />
-                        <span className={`text-xs font-medium truncate ${checked ? 'text-blue-700' : 'text-gray-700'}`}>{p.name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            {/* 跳过字幕 */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox" checked={skipSubtitleDialogue}
-                onChange={e => { setSkipSubtitleDialogue(e.target.checked); persistPrefs({ skipSubtitleDialogue: e.target.checked }); }}
-                disabled={isProcessing || !srtFile}
-                className="w-3.5 h-3.5 text-amber-600 border-gray-300 rounded focus:ring-1 focus:ring-amber-500 shrink-0"
-              />
-              <span className={`text-xs ${srtFile ? 'text-amber-800' : 'text-gray-400'}`}>
-                跳过包含字幕的区域
-                {!srtFile && <span className="ml-1 text-gray-400">（需上传 SRT）</span>}
-              </span>
-            </label>
-            {/* 去重 */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox" checked={autoDeduplicationDialogue}
-                onChange={e => { setAutoDeduplicationDialogue(e.target.checked); persistPrefs({ autoDeduplicationDialogue: e.target.checked }); }}
-                disabled={isProcessing}
-                className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 shrink-0"
-              />
-              <span className="text-xs text-blue-800">截取完成后自动去重</span>
-            </label>
-          </div>
-        </div>
 
-        {/* ── 第三列：地点卡片 ── */}
-        <div className={`flex-1 bg-white border rounded-xl shadow-sm overflow-hidden flex flex-col transition-all ${captureLocation ? 'border-green-200' : 'border-gray-200 opacity-60'}`}>
-          <div className={`px-4 py-3 border-b flex items-center gap-2 ${captureLocation ? 'bg-green-50 border-green-100' : 'bg-gray-50 border-gray-100'}`}>
-            <label className="flex items-center gap-2 cursor-pointer flex-1">
-              <input
-                type="checkbox"
-                checked={captureLocation}
-                onChange={e => { setCaptureLocation(e.target.checked); persistPrefs({ captureLocation: e.target.checked }); }}
-                disabled={isProcessing}
-                className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-1 focus:ring-green-500"
-              />
-              <span className={`text-sm font-semibold ${captureLocation ? 'text-green-700' : 'text-gray-500'}`}>地点</span>
-            </label>
-          </div>
-          <div className={`p-4 flex flex-col gap-3 flex-1 ${!captureLocation && 'bg-gray-50/50'}`}>
-            {/* 坐标预设 */}
-            {locationPresets.length === 0 ? (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 text-xs text-yellow-800">没有可用的「地点」预设</div>
-            ) : (
-              <div className="overflow-y-auto max-h-16">
-                <div className="grid grid-cols-3 gap-1">
-                  {locationPresets.map((p) => {
-                    const checked = selectedLocationPreset === p.name;
-                    return (
-                      <label key={p.name} title={p.description} className={`flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border cursor-pointer transition-all text-center ${checked ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'}`}>
-                        <input type="radio" className="sr-only" checked={checked} onChange={() => { setSelectedLocationPreset(p.name); persistPrefs({ selectedLocationPreset: p.name }); }} disabled={isProcessing} />
-                        <span className={`text-xs font-medium truncate ${checked ? 'text-green-700' : 'text-gray-700'}`}>{p.name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            {/* 跳过字幕 */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox" checked={skipSubtitleLocation}
-                onChange={e => { setSkipSubtitleLocation(e.target.checked); persistPrefs({ skipSubtitleLocation: e.target.checked }); }}
-                disabled={isProcessing || !srtFile}
-                className="w-3.5 h-3.5 text-amber-600 border-gray-300 rounded focus:ring-1 focus:ring-amber-500 shrink-0"
-              />
-              <span className={`text-xs ${srtFile ? 'text-amber-800' : 'text-gray-400'}`}>
-                跳过包含字幕的区域
-                {!srtFile && <span className="ml-1 text-gray-400">（需上传 SRT）</span>}
-              </span>
-            </label>
-            {/* 去重 */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox" checked={autoDeduplicationLocation}
-                onChange={e => { setAutoDeduplicationLocation(e.target.checked); persistPrefs({ autoDeduplicationLocation: e.target.checked }); }}
-                disabled={isProcessing}
-                className="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-1 focus:ring-green-500 shrink-0"
-              />
-              <span className="text-xs text-green-800">截取完成后自动去重</span>
-            </label>
-          </div>
-        </div>
-
-      </div>
-
-      {/* 底部：进度条 + 开始按钮 */}
-      <div className="px-4 pb-3 space-y-2">
-        {/* 进度条区域：处理中时显示 */}
-        {isProcessing && progress && (
-          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
-            {/* 总进度标题行 */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <svg className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <span className="text-xs font-semibold text-gray-700 truncate max-w-[320px]">{progress.message}</span>
-              </div>
-              <span className={`text-xs font-bold tabular-nums shrink-0 ${progress.stage === 'deduplicating' ? 'text-purple-600' : 'text-indigo-600'}`}>
-                {Math.round(progress.current)}%
-              </span>
-            </div>
-
-            {/* 主进度条 */}
-            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-300 ${
-                  progress.stage === 'deduplicating'
-                    ? 'bg-linear-to-r from-purple-500 to-purple-400'
-                    : progress.message.includes('地点')
-                    ? 'bg-linear-to-r from-green-500 to-green-400'
-                    : 'bg-linear-to-r from-indigo-500 to-blue-400'
-                }`}
-                style={{ width: `${Math.min(100, Math.max(0, progress.current))}%` }}
-              />
-            </div>
-
-            {/* 阶段标签行 */}
-            <div className="flex items-center gap-3">
-              {/* 截取对话 */}
-              <div className={`flex items-center gap-1 text-[11px] font-medium ${
-                progress.stage === 'extracting' && !progress.message.includes('地点')
-                  ? 'text-blue-600'
-                  : 'text-gray-400'
-              }`}>
-                {progress.stage === 'extracting' && !progress.message.includes('地点') ? (
-                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                ) : (
-                  <svg className="w-3 h-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                )}
-                截取对话
-              </div>
-
-              <svg className="w-3 h-3 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-
-              {/* 截取地点 */}
-              <div className={`flex items-center gap-1 text-[11px] font-medium ${
-                progress.stage === 'extracting' && progress.message.includes('地点')
-                  ? 'text-green-600'
-                  : progress.stage === 'deduplicating'
-                  ? 'text-gray-400'
-                  : 'text-gray-300'
-              }`}>
-                {progress.stage === 'extracting' && progress.message.includes('地点') ? (
-                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                ) : progress.stage === 'deduplicating' ? (
-                  <svg className="w-3 h-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                ) : (
-                  <div className="w-3 h-3 rounded-full border-2 border-gray-300" />
-                )}
-                截取地点
-              </div>
-
-              <svg className="w-3 h-3 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-
-              {/* 自动去重 */}
-              <div className={`flex items-center gap-1 text-[11px] font-medium ${
-                progress.stage === 'deduplicating' ? 'text-purple-600' : 'text-gray-300'
-              }`}>
-                {progress.stage === 'deduplicating' ? (
-                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                ) : (
-                  <div className="w-3 h-3 rounded-full border-2 border-gray-300" />
-                )}
-                自动去重
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 开始按钮 */}
-        <div className="flex justify-end">
           <button
             onClick={handleConfirm}
             disabled={isProcessing}
-            className="px-5 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 shadow-sm shadow-indigo-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full px-5 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 shadow-sm shadow-indigo-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Scan className="w-4 h-4" />
             {isProcessing ? '处理中…' : '一键处理'}
           </button>
+
+          <div className="space-y-2">
+            {/* 进度条区域：处理中时显示 */}
+            {isProcessing && progress && (
+              <QuickProgressBar
+                progress={progress}
+                captureDialogue={captureDialogue}
+                captureLocation={captureLocation}
+                autoDeduplicationDialogue={autoDeduplicationDialogue}
+                autoDeduplicationLocation={autoDeduplicationLocation}
+              />
+            )}
+          </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ── 进度条子组件 ──────────────────────────────────────────────────────────────
+
+interface QuickProgressBarProps {
+  progress: {
+    current: number;
+    total: number;
+    message: string;
+    stage?: 'extracting' | 'extracting-dialogue' | 'extracting-location' | 'deduplicating';
+  };
+  captureDialogue: boolean;
+  captureLocation: boolean;
+  autoDeduplicationDialogue: boolean;
+  autoDeduplicationLocation: boolean;
+}
+
+type StepStatus = 'pending' | 'active' | 'done';
+
+interface StepDef {
+  key: string;
+  label: string;
+  color: 'blue' | 'green' | 'purple';
+  activeStage: QuickProgressBarProps['progress']['stage'];
+}
+
+const SpinIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={`animate-spin ${className ?? ''}`} fill="none" viewBox="0 0 24 24">
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+  </svg>
+);
+
+const CheckIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 20 20">
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+  </svg>
+);
+
+const stepColorMap = {
+  blue:   { bar: 'bg-blue-500',   text: 'text-blue-600',   activeBg: 'bg-blue-50 border-blue-200' },
+  green:  { bar: 'bg-green-500',  text: 'text-green-600',  activeBg: 'bg-green-50 border-green-200' },
+  purple: { bar: 'bg-purple-500', text: 'text-purple-600', activeBg: 'bg-purple-50 border-purple-200' },
+};
+
+const QuickProgressBar: React.FC<QuickProgressBarProps> = ({
+  progress,
+  captureDialogue,
+  captureLocation,
+  autoDeduplicationDialogue,
+  autoDeduplicationLocation,
+}) => {
+  // 根据实际勾选项构建步骤列表
+  const steps = React.useMemo<StepDef[]>(() => {
+    const list: StepDef[] = [];
+    if (captureDialogue) list.push({ key: 'dialogue', label: '截取对话', color: 'blue', activeStage: 'extracting-dialogue' });
+    if (captureLocation) list.push({ key: 'location', label: '截取地点', color: 'green', activeStage: 'extracting-location' });
+    if (captureDialogue && autoDeduplicationDialogue) list.push({ key: 'dedup-dialogue', label: '去重对话', color: 'purple', activeStage: 'deduplicating' });
+    if (captureLocation && autoDeduplicationLocation) list.push({ key: 'dedup-location', label: '去重地点', color: 'purple', activeStage: 'deduplicating' });
+    return list;
+  }, [captureDialogue, captureLocation, autoDeduplicationDialogue, autoDeduplicationLocation]);
+
+  const stage = progress.stage;
+  const pct = Math.min(100, Math.max(0, progress.current));
+
+  // 计算每个步骤的状态
+  const getStepStatus = (step: StepDef, idx: number): StepStatus => {
+    if (step.activeStage === 'deduplicating') {
+      // 去重步骤：需要区分对话/地点
+      if (stage !== 'deduplicating') return idx < steps.findIndex(s => s.activeStage === 'deduplicating') ? 'done' : 'pending';
+      const dedupSteps = steps.filter(s => s.activeStage === 'deduplicating');
+      const isDialogueDedup = step.key === 'dedup-dialogue';
+      const isLocationDedup = step.key === 'dedup-location';
+      if (isDialogueDedup && progress.message.includes('对话')) return 'active';
+      if (isLocationDedup && progress.message.includes('地点')) return 'active';
+      // 对话去重已完成（当前在地点去重）
+      if (isDialogueDedup && progress.message.includes('地点')) return 'done';
+      return 'pending';
+    }
+    if (stage === step.activeStage) return 'active';
+    // 判断是否已完成：当前 stage 在步骤列表中排在该步骤之后
+    const stageOrder: Record<string, number> = {
+      'extracting-dialogue': 0,
+      'extracting-location': 1,
+      'extracting': 0,
+      'deduplicating': 2,
+    };
+    const currentOrder = stageOrder[stage ?? ''] ?? -1;
+    const stepOrder = stageOrder[step.activeStage ?? ''] ?? 99;
+    return currentOrder > stepOrder ? 'done' : 'pending';
+  };
+
+  const getStepProgress = React.useCallback((step: StepDef): number => {
+    if (step.key === 'dialogue') {
+      if (stage === 'extracting-dialogue') return pct;
+      if (stage === 'extracting-location' || stage === 'deduplicating') return 100;
+      return 0;
+    }
+
+    if (step.key === 'location') {
+      if (stage === 'extracting-location') return pct;
+      if (stage === 'deduplicating') return 100;
+      return 0;
+    }
+
+    if (step.key === 'dedup-dialogue') {
+      if (stage !== 'deduplicating') return 0;
+      if (progress.message.includes('对话')) return pct;
+      if (progress.message.includes('地点')) return 100;
+      return 0;
+    }
+
+    if (step.key === 'dedup-location') {
+      if (stage === 'deduplicating' && progress.message.includes('地点')) return pct;
+      return 0;
+    }
+
+    return 0;
+  }, [stage, pct, progress.message]);
+
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2.5">
+      {/* 标题行：当前消息 */}
+      <div className="flex items-center gap-2 min-w-0">
+        <SpinIcon className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+        <span className="text-xs font-semibold text-gray-700 truncate">{progress.message}</span>
+      </div>
+
+      {/* 每个步骤独立进度 */}
+      <div className="space-y-2">
+        {steps.map((step, idx) => {
+          const status = getStepStatus(step, idx);
+          const c = stepColorMap[step.color];
+          const stepProgress = Math.max(0, Math.min(100, getStepProgress(step)));
+
+          return (
+            <div
+              key={step.key}
+              className={`rounded-lg border px-2.5 py-2 transition-colors ${
+                status === 'active' ? c.activeBg : status === 'done' ? 'bg-white border-gray-200' : 'bg-white/70 border-gray-100'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {status === 'active' ? (
+                    <SpinIcon className={`w-3.5 h-3.5 shrink-0 ${c.text}`} />
+                  ) : status === 'done' ? (
+                    <CheckIcon className="w-3.5 h-3.5 shrink-0 text-green-500" />
+                  ) : (
+                    <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 shrink-0" />
+                  )}
+                  <span className={`text-xs font-medium truncate ${status === 'pending' ? 'text-gray-400' : 'text-gray-700'}`}>
+                    {step.label}
+                  </span>
+                </div>
+                <span className={`text-xs font-bold tabular-nums shrink-0 ${status === 'active' ? c.text : 'text-gray-500'}`}>
+                  {Math.round(stepProgress)}%
+                </span>
+              </div>
+
+              <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    step.color === 'purple' ? 'bg-purple-400' :
+                    step.color === 'green' ? 'bg-green-400' : 'bg-blue-400'
+                  }`}
+                  style={{ width: `${stepProgress}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

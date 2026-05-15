@@ -24,7 +24,7 @@ const InsertMenu = React.memo<InsertMenuProps>(({ isOpen, onClose, onInsert }) =
   if (!isOpen) return null;
   return (
     <div
-      className="absolute right-2 top-10 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex flex-col gap-1 z-10 min-w-[140px]"
+      className="absolute right-2 top-10 z-50 bg-white rounded-lg shadow-lg border border-gray-200 p-1 flex flex-col gap-1 min-w-[140px]"
       onClick={(e) => e.stopPropagation()}
     >
       <MenuButton onClick={() => { onInsert('narration'); onClose(); }}>插入普通旁白</MenuButton>

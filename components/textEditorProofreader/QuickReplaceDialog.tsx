@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getAvatarPath } from '../../utils/avatarMap';
+import { findBestAvatarMatch, getAvatarPath, normalizeAvatarName } from '../../utils/avatarMap';
 import AvatarPicker from '../AvatarPicker';
 import { ExtractedFrame, VideoFile, ROI } from '../../types';
+import CenteredModal from '../common/CenteredModal';
+
+const ITEMS_PER_PAGE = 9;
 
 export interface QuickReplaceDialogProps {
   characters: string[];
@@ -45,31 +48,35 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
   const [mode, setMode] = useState<'single' | 'batch'>('single');
   const [batchAvatarMap, setBatchAvatarMap] = useState<Record<string, string>>({});
   const [currentBatchCharacter, setCurrentBatchCharacter] = useState('');
-
-  const [itemsPerPage, setItemsPerPage] = useState(() => {
-    const saved = localStorage.getItem('quickReplaceDialog_itemsPerPage');
-    return saved ? Number(saved) : 10;
-  });
   const [currentPage, setCurrentPage] = useState(() => {
     const saved = localStorage.getItem('quickReplaceDialog_currentPage');
     return saved ? Number(saved) : 1;
   });
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  const getPreferredAvatarForCharacter = (characterName: string) => {
+    return findBestAvatarMatch(characterName) || normalizeAvatarName(avatarHistory[characterName]?.[0] || '') || '';
+  };
+
   useEffect(() => {
     const initialMap: Record<string, string> = {};
     characters.forEach(character => {
-      const history = avatarHistory[character];
-      if (history && history.length > 0) {
-        initialMap[character] = history[0];
+      const preferredAvatar = getPreferredAvatarForCharacter(character);
+      if (preferredAvatar) {
+        initialMap[character] = preferredAvatar;
       }
     });
     setBatchAvatarMap(initialMap);
   }, [characters, avatarHistory]);
 
   useEffect(() => {
-    localStorage.setItem('quickReplaceDialog_itemsPerPage', String(itemsPerPage));
-  }, [itemsPerPage]);
+    if (!selectedCharacter) {
+      setSelectedAvatar('');
+      return;
+    }
+
+    setSelectedAvatar(getPreferredAvatarForCharacter(selectedCharacter));
+  }, [selectedCharacter, avatarHistory]);
 
   useEffect(() => {
     localStorage.setItem('quickReplaceDialog_currentPage', String(currentPage));
@@ -93,9 +100,9 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
     }
   }, [currentPage]);
 
-  const totalPages = Math.ceil(characters.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
+  const totalPages = Math.ceil(characters.length / ITEMS_PER_PAGE);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
   const paginatedCharacters = characters.slice(startIndex, endIndex);
 
   useEffect(() => {
@@ -128,12 +135,17 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
   };
 
   const handleQuickSelectFromHistory = (characterName: string, avatarName: string) => {
+    const normalizedAvatarName = normalizeAvatarName(avatarName);
     if (mode === 'single') {
       onCharacterSelect(characterName);
-      setSelectedAvatar(avatarName);
+      setSelectedAvatar(normalizedAvatarName);
     } else {
-      setBatchAvatarMap(prev => ({ ...prev, [characterName]: avatarName }));
+      setBatchAvatarMap(prev => ({ ...prev, [characterName]: normalizedAvatarName }));
     }
+  };
+
+  const getCharacterMatchedAvatar = (characterName: string) => {
+    return getPreferredAvatarForCharacter(characterName);
   };
 
   const PaginationControls = () => (
@@ -162,13 +174,9 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
   const ItemsPerPageSelect = () => (
     <div className="flex items-center gap-2">
       <label className="text-xs text-gray-600">每页显示：</label>
-      <select
-        value={itemsPerPage}
-        onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-        className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-      >
-        {[5, 10, 15, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
-      </select>
+      <span className="inline-flex min-w-12 items-center justify-center rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-xs text-gray-700">
+        {ITEMS_PER_PAGE}
+      </span>
     </div>
   );
 
@@ -190,32 +198,29 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
         />
       )}
 
-      <div
-        className="fixed inset-0 z-999 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-        onClick={onClose}
-      >
-        <div
-          className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* 头部 */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-            <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-              🎭 一键替换人名头像
-            </h3>
+      <CenteredModal
+        open={true}
+        onClose={onClose}
+        title="🎭 一键替换人名头像"
+        panelClassName="w-full max-w-2xl mx-4 flex max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        bodyClassName={null}
+        footer={
+          <>
+            <button
+              onClick={handleConfirm}
+              disabled={mode === 'single' ? (!selectedCharacter || !selectedAvatar) : (Object.keys(batchAvatarMap).length === 0)}
+              className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {mode === 'single' ? '确认替换' : `批量替换 (${Object.keys(batchAvatarMap).length})`}
+            </button>
             <button
               onClick={onClose}
-              className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-              aria-label="关闭"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          {/* 内容区 */}
-          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+            >取消</button>
+          </>
+        }
+      >
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
             {/* 模式切换 */}
             <div className="flex gap-2 p-1 bg-gray-100 rounded-lg">
               <button
@@ -244,13 +249,27 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
                     <ItemsPerPageSelect />
                   </div>
                   <div className="grid grid-cols-3 gap-2 p-2 bg-gray-50 rounded-lg border border-gray-200">
-                    {paginatedCharacters.map((character) => (
-                      <button
-                        key={character}
-                        onClick={() => onCharacterSelect(character)}
-                        className={`px-3 py-2 text-sm font-medium rounded-lg transition-all ${selectedCharacter === character ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'}`}
-                      >{character}</button>
-                    ))}
+                    {paginatedCharacters.map((character) => {
+                      const matchedAvatar = getCharacterMatchedAvatar(character);
+                      const matchedAvatarPath = matchedAvatar ? getAvatarPath(matchedAvatar) : null;
+
+                      return (
+                        <button
+                          key={character}
+                          onClick={() => onCharacterSelect(character)}
+                          className={`px-3 py-2 text-sm font-medium rounded-lg transition-all ${selectedCharacter === character ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'}`}
+                        >
+                          <div className="flex items-center justify-center gap-2 min-w-0">
+                            {matchedAvatarPath && (
+                              <div className={`w-8 h-8 rounded-full overflow-hidden border-2 shrink-0 ${selectedCharacter === character ? 'border-white/80' : 'border-purple-200'}`}>
+                                <img src={matchedAvatarPath} alt={matchedAvatar} className="w-full h-full object-cover" />
+                              </div>
+                            )}
+                            <span className="truncate">{character}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                   <PaginationControls />
                 </div>
@@ -369,24 +388,8 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
                 </div>
               </div>
             )}
-          </div>
-
-          {/* 底部 */}
-          <div className="flex flex-row-reverse gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50">
-            <button
-              onClick={handleConfirm}
-              disabled={mode === 'single' ? (!selectedCharacter || !selectedAvatar) : (Object.keys(batchAvatarMap).length === 0)}
-              className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium bg-purple-600 text-white hover:bg-purple-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {mode === 'single' ? '确认替换' : `批量替换 (${Object.keys(batchAvatarMap).length})`}
-            </button>
-            <button
-              onClick={onClose}
-              className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
-            >取消</button>
-          </div>
         </div>
-      </div>
+      </CenteredModal>
     </>
   );
 };

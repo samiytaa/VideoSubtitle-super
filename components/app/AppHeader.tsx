@@ -26,9 +26,9 @@ const AppHeader: React.FC<AppHeaderProps> = ({ activeTab, isProcessing, onChange
   };
 
   return (
-    <header className="bg-white border-b border-gray-200/60 sticky top-0 z-50 shadow-sm">
+    <header className="sticky top-0 z-50 bg-white pt-2 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-10 items-center">
+        <div className="flex h-11 items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="bg-linear-to-br from-indigo-600 to-indigo-700 p-1.5 rounded-md shadow-sm">
               <Video className="text-white w-4 h-4" />

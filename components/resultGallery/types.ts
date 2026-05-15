@@ -29,14 +29,7 @@ export interface GalleryToolbarProps {
   viewType: ViewType;
   selectedGroup: GroupFilter;
   selectedIds: Set<string>;
-  selectedOrder: string[];
   rangeSelectMode: boolean;
-  rangeStart: string | null;
-  // 分页
-  currentPage: number;
-  totalPages: number;
-  itemsPerPage: number;
-  itemsPerRow: ItemsPerRow;
   // 去重状态
   isDeduplicating: boolean;
   deduplicateProgress: { current: number; total: number };
@@ -44,26 +37,24 @@ export interface GalleryToolbarProps {
   isDownloading: boolean;
   // 拼接参数
   batchSize: number;
+  // 显示设置
+  itemsPerPage: number;
+  itemsPerRow: ItemsPerRow;
   // 文件输入 ref
   fileInputRef: React.RefObject<HTMLInputElement>;
   // 回调
   onViewTypeChange: (type: ViewType) => void;
   onGroupChange: (group: GroupFilter) => void;
-  onSelectAll: () => void;
-  onInvertSelection: () => void;
   onToggleRangeSelectMode: () => void;
-  onClearSelection: () => void;
   onMergeSelected: () => void;
   onBatchSizeChange: (size: number) => void;
+  onItemsPerPageChange: (count: number) => void;
+  onItemsPerRowChange: (count: ItemsPerRow) => void;
+  onClearCurrent: () => void;
   onRemoveDuplicates: () => void;
   onImportClick: () => void;
   onFileImport: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onDownloadZip: () => void;
-  onDeleteSelected: () => void;
-  onClearCurrent: () => void;
   onClearAllData: () => void;
   onMergeGroupsClick: () => void;
-  onPageChange: (page: number) => void;
-  onItemsPerPageChange: (n: number) => void;
-  onItemsPerRowChange: (n: ItemsPerRow) => void;
 }

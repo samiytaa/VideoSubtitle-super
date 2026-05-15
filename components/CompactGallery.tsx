@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { CheckSquare, Square, ExternalLink, Trash2, X, Upload, Image as ImageIcon, Video, Scissors } from 'lucide-react';
+import { CheckSquare, Square, ExternalLink, Trash2, X, Upload, Image as ImageIcon, Video, Scissors, Info } from 'lucide-react';
 import { ExtractedFrame, VideoFile, ROI } from '../types';
 import { useNotifier } from './Notifications';
 import { confirmDelete } from '../utils/confirmActions';
+import ImageInfoPanel from './resultGallery/ImageInfoPanel';
+import { useFrameFilter, useGalleryPagination } from '../hooks';
 
 interface CompactGalleryProps {
   frames: ExtractedFrame[];
@@ -15,7 +17,16 @@ interface CompactGalleryProps {
   onCaptureFrame?: (frame: ExtractedFrame) => void;
 }
 
-const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJumpToTime, activeVideo, videoSrc, sharedVideoRef, roi, onCaptureFrame }) => {
+const CompactGallery: React.FC<CompactGalleryProps> = ({
+  frames,
+  onDelete,
+  onJumpToTime,
+  activeVideo,
+  videoSrc,
+  sharedVideoRef,
+  roi,
+  onCaptureFrame
+}) => {
   const [panelTab, setPanelTab] = useState<'images' | 'video'>('images');
   const videoRef = useRef<HTMLVideoElement>(null);
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -186,83 +197,31 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedGroup, setSelectedGroup] = useState<'all' | 'group1' | 'group2'>('all');
-  
+  const [selectedInfoItem, setSelectedInfoItem] = useState<ExtractedFrame | null>(null);
+
   // 滚动容器引用
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  
-  // 从 localStorage 获取指定分组的页数和每页数量
-  const getGroupState = (group: string) => {
-    if (typeof window === 'undefined') return { page: 1, itemsPerPage: 50 };
-    const savedPage = window.localStorage.getItem(`compactGallery_currentPage_${group}`);
-    const savedItemsPerPage = window.localStorage.getItem(`compactGallery_itemsPerPage_${group}`);
-    const page = savedPage ? parseInt(savedPage, 10) : 1;
-    const itemsPerPage = savedItemsPerPage ? parseInt(savedItemsPerPage, 10) : 50;
-    return {
-      page: Number.isFinite(page) && page > 0 ? page : 1,
-      itemsPerPage: Number.isFinite(itemsPerPage) && itemsPerPage > 0 ? itemsPerPage : 50
-    };
-  };
-  
-  const [currentPage, setCurrentPage] = useState(() => getGroupState('all').page);
-  const [itemsPerPage, setItemsPerPage] = useState(() => getGroupState('all').itemsPerPage);
-  
+
   const notifier = useNotifier();
 
-  // 根据选择的分组过滤和排序截取结果
-  const filteredFrames = React.useMemo(() => {
-    const filtered = selectedGroup === 'all' 
-      ? frames 
-      : frames.filter(f => f.group === selectedGroup);
-    
-    const groupPriority: Record<string, number> = {
-      'g2': 1,  // 【地点】优先
-      'g1': 2   // 【对话】其次
-    };
-    
-    const extractTimeFromFilename = (filename: string): number => {
-      const match = filename.match(/\[(\d{2})[_:](\d{2})[_:](\d{2})\.(\d{3})\]/);
-      if (!match) return 0;
-      const [, hours, minutes, seconds, milliseconds] = match;
-      return parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds) + parseInt(milliseconds) / 1000;
-    };
-    
-    const extractGroupFromFilename = (filename: string): string => {
-      const match = filename.match(/^(g[12])_/);
-      return match ? match[1] : 'g1';
-    };
-    
-    return [...filtered].sort((a, b) => {
-      const timeA = extractTimeFromFilename(a.filename);
-      const timeB = extractTimeFromFilename(b.filename);
-      
-      if (timeA !== timeB) {
-        return timeA - timeB;
-      }
-      
-      const groupA = extractGroupFromFilename(a.filename);
-      const groupB = extractGroupFromFilename(b.filename);
-      const priorityA = groupPriority[groupA] || 999;
-      const priorityB = groupPriority[groupB] || 999;
-      
-      if (priorityA !== priorityB) {
-        return priorityA - priorityB;
-      }
-      
-      return a.filename.localeCompare(b.filename);
-    });
-  }, [frames, selectedGroup]);
+  // ── 过滤 + 排序（共用 hook）──────────────────────────────────────────────────
+  const filteredFrames = useFrameFilter({ frames, selectedGroup });
 
-  // 分页计算
-  const currentItems = React.useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return filteredFrames.slice(startIndex, endIndex);
-  }, [filteredFrames, currentPage, itemsPerPage]);
+  // ── 分页（共用 hook）────────────────────────────────────────────────────────
+  const {
+    currentPage,
+    setCurrentPage,
+    itemsPerPage,
+    setItemsPerPage,
+    totalPages,
+    paginate,
+  } = useGalleryPagination({
+    totalItems: filteredFrames.length,
+    storageKey: `compactGallery_${selectedGroup}`,
+  });
 
-  const totalPages = React.useMemo(() => {
-    return Math.max(1, Math.ceil(filteredFrames.length / itemsPerPage));
-  }, [filteredFrames, itemsPerPage]);
-  
+  const currentItems = paginate(filteredFrames);
+
   const selectedCountInView = React.useMemo(
     () => filteredFrames.reduce((count, frame) => count + (selectedIds.has(frame.id) ? 1 : 0), 0),
     [filteredFrames, selectedIds]
@@ -278,93 +237,45 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
     return { all: frames.length, group1, group2 };
   }, [frames]);
 
-  // 保存当前分组的页数和每页数量到 localStorage
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(`compactGallery_currentPage_${selectedGroup}`, String(currentPage));
-  }, [currentPage, selectedGroup]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(`compactGallery_itemsPerPage_${selectedGroup}`, String(itemsPerPage));
-  }, [itemsPerPage, selectedGroup]);
-
-  // 保存滚动位置到 localStorage
+  // 保存 / 恢复滚动位置
   useEffect(() => {
     const saveScrollPosition = () => {
       if (scrollContainerRef.current && typeof window !== 'undefined') {
         window.localStorage.setItem(`compactGallery_scrollTop_${selectedGroup}`, String(scrollContainerRef.current.scrollTop));
       }
     };
-
     const container = scrollContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', saveScrollPosition);
-    }
-
-    return () => {
-      if (container) {
-        container.removeEventListener('scroll', saveScrollPosition);
-      }
-    };
+    if (container) container.addEventListener('scroll', saveScrollPosition);
+    return () => { if (container) container.removeEventListener('scroll', saveScrollPosition); };
   }, [selectedGroup]);
 
-  // 切换分组时，恢复该分组的页数、每页数量和滚动位置
   const hasMountedRef = React.useRef(false);
   const previousGroupRef = React.useRef<string>(selectedGroup);
-  
+
   useEffect(() => {
-    // 如果分组发生变化，先保存之前分组的滚动位置
     if (hasMountedRef.current && previousGroupRef.current !== selectedGroup && scrollContainerRef.current) {
-      const previousScrollTop = scrollContainerRef.current.scrollTop;
-      window.localStorage.setItem(`compactGallery_scrollTop_${previousGroupRef.current}`, String(previousScrollTop));
+      window.localStorage.setItem(`compactGallery_scrollTop_${previousGroupRef.current}`, String(scrollContainerRef.current.scrollTop));
     }
-    
-    // 恢复新分组的页数、每页数量和滚动位置
-    const groupState = getGroupState(selectedGroup);
-    setCurrentPage(groupState.page);
-    setItemsPerPage(groupState.itemsPerPage);
-    
-    // 恢复滚动位置（需要延迟以确保DOM已更新）
     const restoreScrollPosition = () => {
       if (scrollContainerRef.current && typeof window !== 'undefined') {
-        const savedScrollTop = window.localStorage.getItem(`compactGallery_scrollTop_${selectedGroup}`);
-        if (savedScrollTop) {
-          scrollContainerRef.current.scrollTop = Number(savedScrollTop);
-        }
+        const saved = window.localStorage.getItem(`compactGallery_scrollTop_${selectedGroup}`);
+        if (saved) scrollContainerRef.current.scrollTop = Number(saved);
       }
     };
-    
     if (hasMountedRef.current) {
-      // 切换分组时，延迟恢复滚动位置以确保内容已渲染
       setTimeout(restoreScrollPosition, 50);
     } else {
       hasMountedRef.current = true;
-      // 首次加载时恢复滚动位置
       setTimeout(restoreScrollPosition, 100);
     }
-    
     previousGroupRef.current = selectedGroup;
   }, [selectedGroup]);
 
-  // 数据量变化时，如果当前页超出范围则自动修正
-  React.useEffect(() => {
-    setCurrentPage(prev => {
-      if (!prev || prev < 1) return 1;
-      if (prev > totalPages) return totalPages;
-      return prev;
-    });
-  }, [totalPages]);
-
-  // 当页面改变时，恢复该页面的滚动位置（或滚动到顶部）
+  // 翻页时滚动到顶部
   const previousPageRef = React.useRef<number>(currentPage);
   useEffect(() => {
     if (hasMountedRef.current && previousPageRef.current !== currentPage) {
-      // 页面改变时，可以滚动到顶部，或者记忆每个页面的滚动位置
-      // 这里选择滚动到顶部，因为切换页面时通常期望看到页面顶部
-      if (scrollContainerRef.current) {
-        scrollContainerRef.current.scrollTop = 0;
-      }
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
     }
     previousPageRef.current = currentPage;
   }, [currentPage]);
@@ -415,7 +326,7 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col">
       {/* 顶部：Tab 切换 + 分组筛选 */}
       <div className="flex items-center justify-between border-b border-gray-200 shrink-0 px-2 py-1.5">
         {/* 左侧：Tab 切换 */}
@@ -455,7 +366,7 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
               <button
                 key={key}
                 onClick={() => setSelectedGroup(key as any)}
-                className={`px-2.5 py-1 text-xs rounded-md transition-all ${
+                className={`px-1.5 py-0.5 text-[11px] rounded transition-all ${
                   selectedGroup === key
                     ? 'bg-indigo-600 text-white font-medium'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -469,7 +380,7 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
       </div>
 
       {/* 视频 Tab */}
-      <div className={`flex-1 overflow-y-auto flex flex-col bg-black ${panelTab === 'video' ? '' : 'hidden'}`}>
+      <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col bg-black scrollbar-thin ${panelTab === 'video' ? '' : 'hidden'}`}>
           {activeVideo && videoSrc ? (
             <>
               <video
@@ -513,10 +424,9 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
         </div>
 
       {/* 图片 Tab */}
-      <div className={panelTab === 'images' ? 'contents' : 'hidden'}>
-        <>
+      <div className={panelTab === 'images' ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}>
       {/* 工具栏：操作按钮 + 每页数量 */}
-      <div className="border-b border-gray-200 px-2 py-1.5 bg-gray-50">
+      <div className="border-b border-gray-200 px-2 py-1.5 bg-gray-50 shrink-0">
         <div className="flex items-center justify-between gap-2">
           {/* 左侧：选择操作 */}
           <div className="flex items-center gap-1.5">
@@ -576,7 +486,7 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
       </div>
 
       {/* 图片列表 - 每行一张 */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-auto space-y-1.5 px-2 pb-2">
+      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto space-y-1.5 px-2 pb-2 scrollbar-thin">
         {currentItems.map((frame) => {
           const isSelected = selectedIds.has(frame.id);
           
@@ -600,6 +510,16 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
                 
                 {/* 悬浮按钮 */}
                 <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedInfoItem(frame);
+                    }}
+                    className="p-1 bg-white/80 backdrop-blur rounded-full text-slate-600 hover:bg-white shadow-sm"
+                    title="查看图片详情"
+                  >
+                    <Info className="w-3 h-3" />
+                  </button>
                   <button 
                     onClick={(e) => {
                       e.stopPropagation();
@@ -641,12 +561,6 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
                   </div>
                 )}
               </div>
-              
-              {/* 图片信息 */}
-              <div className="p-1.5 bg-gray-50">
-                <p className="text-[10px] text-indigo-600 font-medium">{frame.timestamp}</p>
-                <p className="text-[10px] text-gray-600 truncate">{frame.filename}</p>
-              </div>
             </div>
           );
         })}
@@ -654,24 +568,24 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
 
       {/* 底部分页 */}
       {totalPages > 1 && (
-        <div className="border-t border-gray-200 pt-2 px-2 pb-2">
+        <div className="border-t border-gray-200 pt-1.5 px-2 pb-1.5 shrink-0">
           <div className="flex items-center justify-between">
             <button
               onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
               disabled={currentPage === 1}
-              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
+              className="px-2.5 py-1 text-xs font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
             >
               上一页
             </button>
             
-            <span className="text-sm text-gray-700 font-medium">
+            <span className="text-xs text-gray-700 font-medium">
               {currentPage} / {totalPages}
             </span>
             
             <button
               onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
               disabled={currentPage === totalPages}
-              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
+              className="px-2.5 py-1 text-xs font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
             >
               下一页
             </button>
@@ -692,8 +606,16 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({ frames, onDelete, onJum
           </div>
         </div>
       )}
-        </>
       </div>
+
+      {/* 图片详情侧边栏 */}
+      {selectedInfoItem && (
+        <ImageInfoPanel
+          item={selectedInfoItem}
+          viewType="frames"
+          onClose={() => setSelectedInfoItem(null)}
+        />
+      )}
     </div>
   );
 };

@@ -264,3 +264,39 @@ export const preloadVideo = (video: HTMLVideoElement): Promise<void> => {
     video.load();
   });
 };
+
+/**
+ * 等待视频帧真正完成渲染。
+ * 优先使用 requestVideoFrameCallback，退化到单次 requestAnimationFrame。
+ */
+export const waitForVideoFrame = (video: HTMLVideoElement): Promise<void> => {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      resolve();
+    };
+
+    const requestFrameCallback = (video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (callback: () => void) => number;
+    }).requestVideoFrameCallback;
+
+    if (typeof requestFrameCallback === 'function') {
+      try {
+        requestFrameCallback.call(video, () => finish());
+        timeoutId = setTimeout(() => {
+          requestAnimationFrame(() => finish());
+        }, 120);
+        return;
+      } catch {
+        // ignore and fall back below
+      }
+    }
+
+    requestAnimationFrame(() => finish());
+  });
+};

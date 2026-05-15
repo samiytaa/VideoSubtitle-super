@@ -2,13 +2,16 @@ import { UploadCloud } from 'lucide-react';
 import React from 'react';
 import { VideoFile } from '../../types';
 import { useNotifier } from '../Notifications';
+import { resolveVideoLocalPath } from '../../utils/electronFileAccess';
 
 interface VideoUploadPlaceholderProps {
   onUpload?: (video: VideoFile) => void;
   className?: string;
 }
 
-const getVideoMetadata = (file: File): Promise<VideoFile> => {
+const getVideoMetadata = async (file: File): Promise<VideoFile> => {
+  const localPath = await resolveVideoLocalPath(file);
+
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const video = document.createElement('video');
@@ -20,6 +23,7 @@ const getVideoMetadata = (file: File): Promise<VideoFile> => {
         resolve({
           id: Math.random().toString(36).substr(2, 9),
           file,
+          localPath,
           name: file.name,
           size: file.size,
           duration: video.duration,
@@ -71,7 +75,7 @@ const VideoUploadPlaceholder: React.FC<VideoUploadPlaceholderProps> = ({ onUploa
 
   return (
     <div
-      className={`relative rounded-xl overflow-hidden z-10 h-[calc(100vh-400px)] min-h-[400px]${className ? ` ${className}` : ''}`}
+      className={`relative rounded-xl overflow-hidden z-10 ${className ?? 'w-full aspect-[2/3] max-h-[480px]'}`}
     >
       <input
         ref={inputRef}

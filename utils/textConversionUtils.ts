@@ -4,20 +4,31 @@ export interface ConversionResult {
   error?: string;
 }
 
+export type ConversionMode = 'mitan' | 'mainline';
+
+function normalizeReverseContent(content: string): string {
+  return content
+    .replace(/\r\n?/g, '\n')
+    .replace(/\s*\|\|\|\s*/g, '\n|||\n')
+    .replace(/}}\s*{{/g, '}}\n{{')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
 function convertLine(trimmedLine: string): string {
   if (/^【==.+?==】$/.test(trimmedLine)) {
     const m = trimmedLine.match(/【==(.+?)==】/);
     return m ? `{{旁白|【${m[1]}】}}` : `{{旁白|${trimmedLine}}}`;
-  }
-  if (trimmedLine.includes('：')) {
-    const idx = trimmedLine.indexOf('：');
-    return `{{对话|${trimmedLine.substring(0, idx)}|${trimmedLine.substring(idx + 1)}}}`;
   }
   if (trimmedLine.startsWith('（') && trimmedLine.endsWith('）')) {
     return `{{旁白|心理|${trimmedLine.slice(1, -1)}}}`;
   }
   if (trimmedLine.startsWith('【') && trimmedLine.endsWith('】')) {
     return `{{旁白|${trimmedLine.slice(1, -1)}}}`;
+  }
+  if (trimmedLine.includes('：')) {
+    const idx = trimmedLine.indexOf('：');
+    return `{{对话|${trimmedLine.substring(0, idx)}|${trimmedLine.substring(idx + 1)}}}`;
   }
   return `{{旁白|${trimmedLine}}}`;
 }
@@ -78,7 +89,7 @@ export function convertTextMitan(content: string): ConversionResult {
     if (hasSections && !title) {
       return { success: false, output: '', error: '检测到章节标记，但未找到标题《》，请先添加标题' };
     }
-    const sections = preprocessed.split(/==(\d{2})==/);
+    const sections = preprocessed.split(/==(\d+)==/);
     const result: string[] = [];
 
     const processLine = (trimmedLine: string) => {
@@ -153,6 +164,19 @@ export function convertTextMainline(content: string): ConversionResult {
   }
 }
 
+function restoreChoiceBlocks(content: string): { text: string; map: Map<string, string> } {
+  const choiceMap = new Map<string, string>();
+  let idx = 0;
+
+  const text = content.replace(/{{嵌套分歧\|头}}[\s\S]*?{{嵌套分歧\|尾}}((?:\n{{嵌套分歧\|内容头[^}]*}}[\s\S]*?{{嵌套分歧\|内容尾}})*)/g, (match) => {
+    const key = `__REV_CHOICE_${idx++}__`;
+    choiceMap.set(key, reverseChoiceBlock(match));
+    return key;
+  });
+
+  return { text, map: choiceMap };
+}
+
 function reverseConvertLine(t: string): string {
   const dialogueMatch = t.match(/^{{对话\|(.+?)\|(.+?)}}$/);
   if (dialogueMatch) return `${dialogueMatch[1]}：${dialogueMatch[2]}`;
@@ -193,23 +217,12 @@ function reverseChoiceBlock(block: string): string {
   return lines.join('\n');
 }
 
-export function reverseConvertText(content: string): ConversionResult {
+function reverseConvertMitan(content: string): ConversionResult {
   try {
-    // 先提取并还原分歧/嵌套分歧块
-    const choiceMap = new Map<string, string>();
-    let idx = 0;
-
-    // 匹配 {{嵌套分歧|头}} ... {{嵌套分歧|尾}} 及其后跟随的所有内容头/尾块
-    let processed = content.replace(/{{嵌套分歧\|头}}[\s\S]*?{{嵌套分歧\|尾}}((?:\n{{嵌套分歧\|内容头[^}]*}}[\s\S]*?{{嵌套分歧\|内容尾}})*)/g, (match) => {
-      const key = `__REV_CHOICE_${idx++}__`;
-      choiceMap.set(key, reverseChoiceBlock(match));
-      return key;
-    });
-
+    const { text: processed, map: choiceMap } = restoreChoiceBlocks(normalizeReverseContent(content));
     const lines = processed.split('\n');
     const result: string[] = [];
     let currentTitle = '';
-    let sectionCount = 0;
 
     for (const line of lines) {
       const t = line.trim();
@@ -222,24 +235,17 @@ export function reverseConvertText(content: string): ConversionResult {
       }
 
       // 密探：{{密探故事录入|头|标题|章节}}
-      const mitanHeaderMatch = t.match(/^{{密探故事录入\|头\|(.+?)\|(\d{2})}}$/);
+      const mitanHeaderMatch = t.match(/^{{密探故事录入\|头\|(.+?)\|(\d+)}}$/);
       if (mitanHeaderMatch) {
         currentTitle = mitanHeaderMatch[1];
         if (result.length === 0) result.push(`《${currentTitle}》`);
-        result.push(`==${mitanHeaderMatch[2]}==`);
+        result.push(`==${mitanHeaderMatch[2].padStart(2, '0')}==`);
         continue;
       }
-      if (/^{{密探故事录入\|尾\|.+?\|\d{2}}}$/.test(t)) continue;
+      if (/^{{密探故事录入\|尾\|.+?\|\d+}}$/.test(t)) continue;
 
       // 主线：{{对话-头}} / {{对话-尾}}
-      if (t === '{{对话-头}}') {
-        sectionCount++;
-        const padded = String(sectionCount).padStart(2, '0');
-        if (result.length === 0 && currentTitle) result.push(`《${currentTitle}》`);
-        result.push(`==${padded}==`);
-        continue;
-      }
-      if (t === '{{对话-尾}}') continue;
+      if (t === '{{对话-头}}' || t === '{{对话-尾}}' || t === '{{JS|Qiantao.js}}') continue;
 
       result.push(reverseConvertLine(t));
     }
@@ -251,4 +257,38 @@ export function reverseConvertText(content: string): ConversionResult {
   } catch (error) {
     return { success: false, output: '', error: error instanceof Error ? error.message : '反向转换失败' };
   }
+}
+
+function reverseConvertMainline(content: string): ConversionResult {
+  try {
+    const { text: processed, map: choiceMap } = restoreChoiceBlocks(normalizeReverseContent(content));
+    const lines = processed.split('\n');
+    const result: string[] = [];
+
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t || t === '|||' || t === '{{对话-头}}' || t === '{{对话-尾}}' || t === '{{JS|Qiantao.js}}') {
+        continue;
+      }
+
+      if (choiceMap.has(t)) {
+        result.push(choiceMap.get(t)!);
+        continue;
+      }
+
+      result.push(reverseConvertLine(t));
+    }
+
+    if (result.length === 0) {
+      return { success: false, output: '', error: '未能识别模板格式，请检查输入内容' };
+    }
+
+    return { success: true, output: result.join('\n') };
+  } catch (error) {
+    return { success: false, output: '', error: error instanceof Error ? error.message : '反向转换失败' };
+  }
+}
+
+export function reverseConvertText(content: string, mode: ConversionMode): ConversionResult {
+  return mode === 'mitan' ? reverseConvertMitan(content) : reverseConvertMainline(content);
 }

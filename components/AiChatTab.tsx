@@ -5,6 +5,8 @@ import BaimiaoConfigModal from './baimiao/BaimiaoConfigModal';
 import OcrResultPanel from './baimiao/OcrResultPanel';
 import OcrDebugRunsPanel, { OcrDebugRun } from './baimiao/OcrDebugRunsPanel';
 import { resolveBackendUrl } from '../utils/runtimeConfig';
+import CenteredModal from './common/CenteredModal';
+import RightSlidePanel from './common/RightSlidePanel';
 
 type ModelItem = {
   id?: string;
@@ -85,6 +87,12 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout 
   }
 };
 
+const createAbortError = (message = '请求已取消') => {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+};
+
 const chunkArray = <T,>(items: T[], size: number) => {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -129,6 +137,11 @@ const requestStream = async (
   const { timeout = 120000, ...rest } = options;
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeout);
+  const upstreamSignal = rest.signal;
+  if (upstreamSignal) {
+    if (upstreamSignal.aborted) throw createAbortError();
+    upstreamSignal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
   console.log(`${DEBUG_TAG} requestStream:start`, { url, timeout });
   const response = await request(url, { ...rest, signal: controller.signal, timeout });
   console.log(`${DEBUG_TAG} requestStream:response`, {
@@ -454,12 +467,9 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
   const handleSend = async () => {
     if (!inputText.trim()) return;
     if (!hasConfig) {
-      setInputTasks((prev) => {
-        if (!activeTaskId) return prev;
-        return prev.map((task) =>
-          task.id === activeTaskId ? { ...task, error: '请先配置API信息' } : task,
-        );
-      });
+      setStatus('请先配置完整的 API 信息');
+      setSettingsPanelSection('api');
+      setIsSettingsPanelOpen(true);
       return;
     }
     const task: ChatTask = {
@@ -539,9 +549,11 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
   const [expandedRuns, setExpandedRuns] = useState<Record<number, boolean>>({});
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
   const [settingsPanelSection, setSettingsPanelSection] = useState<'api' | 'baimiao'>('api');
+  const mergedOcrAbortControllerRef = useRef<AbortController | null>(null);
 
-  const requestJson = useCallback(async (url: string, options: RequestInit = {}) => {
-    const response = await fetch(resolveBackendUrl(url), options);
+  const requestJson = useCallback(async (url: string, options: RequestInit & { timeout?: number } = {}) => {
+    const { timeout = 30000, ...rest } = options;
+    const response = await fetchWithTimeout(resolveBackendUrl(url), rest, timeout);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error((payload as any).error || `Request failed: ${response.status}`);
@@ -549,12 +561,18 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
     return payload as any;
   }, []);
 
-  const postJson = useCallback(async (url: string, body: unknown) => {
-    const response = await fetch(resolveBackendUrl(url), {
+  const postJson = useCallback(async (
+    url: string,
+    body: unknown,
+    options: RequestInit & { timeout?: number } = {},
+  ) => {
+    const { timeout = 120000, ...rest } = options;
+    const response = await fetchWithTimeout(resolveBackendUrl(url), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
-    });
+      ...rest,
+    }, timeout);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error((payload as any).error || `Request failed: ${response.status}`);
@@ -589,6 +607,8 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
     setMergedOcrLoading(true);
     setMergedOcrStatus('');
     setMergedOcrProgress({ progress: 0, message: '准备识别...', error: '' });
+    const abortController = new AbortController();
+    mergedOcrAbortControllerRef.current = abortController;
     
     const debugSteps: string[] = [];
     const startTime = new Date();
@@ -608,7 +628,10 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
       const marker = 'base64,';
       const toBase64 = async (url: string) => {
         if (url.includes(marker)) return url.split(marker)[1];
-        const blob = await fetch(url).then((res) => res.blob());
+        if (abortController.signal.aborted) throw createAbortError('OCR 已取消');
+        const blob = await fetchWithTimeout(url, { signal: abortController.signal }, 30000).then((res) =>
+          res.blob(),
+        );
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = (e) => resolve(String(e.target?.result ?? ''));
@@ -656,6 +679,9 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
 
         const payload = await postJson('/api/baimiao/debug-ocr', {
           images: batch.map((item) => ({ image_base64: item.image_base64 })),
+        }, {
+          signal: abortController.signal,
+          timeout: 120000,
         });
         const results = (payload.results ?? []) as Array<{ ok?: boolean; text?: string; error?: string }>;
         allResults.push(...results);
@@ -685,11 +711,9 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
         )
         .join('\n');
 
-      // 移除空行，再移除连续重复行
       const mergedText = rawText
         .split('\n')
         .filter((line) => line.trim() !== '')
-        .filter((line, idx, arr) => idx === 0 || line !== arr[idx - 1])
         .join('\n');
       
       debugSteps.push(`[${formatTime(new Date())}] 文本处理完成，共 ${mergedText.length} 字符`);
@@ -719,7 +743,9 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
       let userFriendlyMessage = errorMessage;
       
       // 处理常见错误
-      if (errorMessage.includes('ERR_CONNECTION_RESET') || 
+      if (err instanceof Error && err.name === 'AbortError') {
+        userFriendlyMessage = 'OCR 已取消';
+      } else if (errorMessage.includes('ERR_CONNECTION_RESET') || 
           errorMessage.includes('Failed to fetch') || 
           errorMessage.includes('NetworkError') ||
           errorMessage.includes('fetch')) {
@@ -748,6 +774,8 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
       setOcrDebugRuns((prev) => [debugRun, ...prev]);
       
       // 不自动关闭，等待用户手动关闭
+    } finally {
+      mergedOcrAbortControllerRef.current = null;
     }
   };
 
@@ -756,6 +784,21 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
     await navigator.clipboard.writeText(mergedOcrText);
     setMergedOcrStatus('已复制');
   };
+
+  const handleDeduplicateMergedOcrLines = () => {
+    if (!mergedOcrText) return;
+    const deduplicated = mergedOcrText
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .filter((line, idx, arr) => idx === 0 || line !== arr[idx - 1])
+      .join('\n');
+    setMergedOcrText(deduplicated);
+    setMergedOcrStatus('已去除连续重复行');
+  };
+
+  const handleCancelMergedOcr = () => {
+    mergedOcrAbortControllerRef.current?.abort();
+  };
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
@@ -763,41 +806,48 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
       
       {/* ── 进度条覆盖层 ── */}
       {(oneClickProgress.isLoading || mergedOcrLoading) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl border border-gray-200/60 bg-white shadow-2xl overflow-hidden">
-            {/* 头部 */}
-            <div className="px-6 py-4 border-b border-gray-100 shrink-0">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-800">
-                  {oneClickProgress.isLoading ? '一键拼接进行中' : '一键OCR进行中'}
-                </h3>
-                <div className="flex items-center gap-3">
-                  {!mergedOcrProgress.error && (
-                    <span className="text-sm font-medium text-indigo-600">
-                      {oneClickProgress.isLoading ? oneClickProgress.progress : mergedOcrProgress.progress}%
-                    </span>
-                  )}
-                  {/* 关闭按钮 - 只在出错时显示 */}
-                  {mergedOcrProgress.error && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMergedOcrProgress({ progress: 0, message: '', error: '' });
-                        setMergedOcrLoading(false);
-                      }}
-                      className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-                    >
-                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M18 6 6 18M6 6l12 12"/>
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* 内容区域 */}
-            <div className="flex-1 overflow-y-auto px-6 py-4">
+        <CenteredModal
+          open={true}
+          closeOnOverlay={false}
+          showCloseButton={false}
+          title={oneClickProgress.isLoading ? '一键拼接进行中' : '一键OCR进行中'}
+          overlayClassName="bg-black/40 backdrop-blur-sm p-4"
+          panelClassName="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden rounded-2xl border border-gray-200/60 bg-white shadow-2xl"
+          bodyClassName="flex-1 overflow-y-auto px-6 py-4"
+          headerActions={
+            <>
+              {!mergedOcrProgress.error && (
+                <span className="text-sm font-medium text-indigo-600">
+                  {oneClickProgress.isLoading ? oneClickProgress.progress : mergedOcrProgress.progress}%
+                </span>
+              )}
+              {mergedOcrLoading && !mergedOcrProgress.error && (
+                <button
+                  type="button"
+                  onClick={handleCancelMergedOcr}
+                  className="rounded-md border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-100"
+                >
+                  取消 OCR
+                </button>
+              )}
+              {mergedOcrProgress.error && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMergedOcrProgress({ progress: 0, message: '', error: '' });
+                    setMergedOcrLoading(false);
+                  }}
+                  className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                  aria-label="关闭"
+                >
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 6 6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              )}
+            </>
+          }
+        >
               {/* 错误显示 */}
               {mergedOcrProgress.error ? (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-4">
@@ -879,9 +929,7 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
                   )}
                 </>
               )}
-            </div>
-          </div>
-        </div>
+        </CenteredModal>
       )}
 
       {/* ── 三栏主区域 ── */}
@@ -933,6 +981,11 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
                 <Settings className="h-3.5 w-3.5" />
               </button>
             </div>
+            {mergedOcrStatus && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                {mergedOcrStatus}
+              </div>
+            )}
 
             {/* OCR 结果面板 */}
             <div className="min-h-0 flex-1">
@@ -952,6 +1005,14 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
                     >
                       <Copy className="h-3 w-3" />
                       复制
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeduplicateMergedOcrLines}
+                      disabled={!mergedOcrText}
+                      className="inline-flex h-7 items-center gap-1 rounded-md bg-amber-50 px-2.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      去重行
                     </button>
                     <button
                       type="button"
@@ -1216,37 +1277,16 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
         </div>
 
       </div>
-      {/* ── 设置侧边栏 ── */}
-      {/* 遮罩层 */}
-      {isSettingsPanelOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/20"
-          onClick={() => setIsSettingsPanelOpen(false)}
-        />
-      )}
-      {/* 侧边栏主体 */}
-      <div
-        className={`fixed top-0 right-0 z-50 h-full w-96 bg-white shadow-2xl border-l border-gray-200 flex flex-col transition-transform duration-300 ease-in-out ${
-          isSettingsPanelOpen ? 'translate-x-0' : 'translate-x-full'
-        }`}
-      >
-        {/* 侧边栏头部 */}
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 shrink-0">
-          <div className="flex items-center gap-2">
-            <Settings className="h-4 w-4 text-indigo-600" />
-            <span className="text-sm font-semibold text-gray-800">设置</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsSettingsPanelOpen(false)}
-            className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        </div>
 
+      {/* ── 设置侧边栏 ── */}
+      <RightSlidePanel
+          open={isSettingsPanelOpen}
+          onClose={() => setIsSettingsPanelOpen(false)}
+          title="设置"
+          headerIcon={<Settings className="w-5 h-5 text-indigo-600" />}
+        >
         {/* Tab 切换 */}
-        <div className="flex border-b border-gray-100 shrink-0">
+        <div className="flex border-b border-gray-200 shrink-0">
           <button
             type="button"
             onClick={() => setSettingsPanelSection('api')}
@@ -1349,54 +1389,47 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
             />
           )}
         </div>
-      </div>
+      </RightSlidePanel>
 
       {/* ── 默认提示词弹窗 ── */}
       {isDefaultPromptOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-          <div className="w-full max-w-2xl rounded-xl border border-gray-200/60 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-              <p className="text-sm font-semibold text-gray-800">默认提示词</p>
-              <button
-                type="button"
-                onClick={() => setIsDefaultPromptOpen(false)}
-                className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-              >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <div className="px-5 py-4">
-              <textarea
-                className="min-h-[200px] w-full resize-y rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-colors focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-200"
-                placeholder="在此编辑默认提示词..."
-                value={defaultSystemPrompt}
-                onChange={(e) => setDefaultSystemPrompt(e.target.value)}
-              />
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    localStorage.setItem(STORAGE_KEYS.defaultSystemPrompt, defaultSystemPrompt);
-                    setIsDefaultPromptOpen(false);
-                  }}
-                  className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
-                >
-                  保存
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDefaultSystemPrompt(BUILTIN_DEFAULT_SYSTEM_PROMPT);
-                    localStorage.setItem(STORAGE_KEYS.defaultSystemPrompt, BUILTIN_DEFAULT_SYSTEM_PROMPT);
-                  }}
-                  className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-                >
-                  恢复内置默认
-                </button>
-              </div>
-            </div>
+        <CenteredModal
+          open={true}
+          onClose={() => setIsDefaultPromptOpen(false)}
+          title="默认提示词"
+          overlayClassName="bg-black/30 px-4"
+          panelClassName="w-full max-w-2xl rounded-2xl border border-gray-200/60 bg-white shadow-2xl"
+          bodyClassName="px-5 py-4"
+        >
+          <textarea
+            className="min-h-[200px] w-full resize-y rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-colors focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-200"
+            placeholder="在此编辑默认提示词..."
+            value={defaultSystemPrompt}
+            onChange={(e) => setDefaultSystemPrompt(e.target.value)}
+          />
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.setItem(STORAGE_KEYS.defaultSystemPrompt, defaultSystemPrompt);
+                setIsDefaultPromptOpen(false);
+              }}
+              className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
+            >
+              保存
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDefaultSystemPrompt(BUILTIN_DEFAULT_SYSTEM_PROMPT);
+                localStorage.setItem(STORAGE_KEYS.defaultSystemPrompt, BUILTIN_DEFAULT_SYSTEM_PROMPT);
+              }}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              恢复内置默认
+            </button>
           </div>
-        </div>
+        </CenteredModal>
       )}
 
     </div>

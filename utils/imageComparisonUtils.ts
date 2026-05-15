@@ -1,6 +1,34 @@
 import pixelmatch from 'pixelmatch';
 import { handleError } from './errorHandler';
 
+interface RankedImageCandidate {
+  id: string;
+  url: string;
+}
+
+interface RankedImageResult {
+  id: string;
+  similarity: number;
+}
+
+interface ImageCompareOptions {
+  threshold?: number;
+  size?: number;
+  paddingRatio?: number;
+  backgroundColor?: string;
+  crop?: NormalizedCropRect;
+  portraitMode?: PortraitCompareMode;
+}
+
+export interface NormalizedCropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type PortraitCompareMode = 'normal' | 'expression';
+
 /**
  * 加载图片
  */
@@ -11,6 +39,328 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.onerror = reject;
     img.src = url;
   });
+}
+
+function getOpaqueBounds(imageData: ImageData): { x: number; y: number; width: number; height: number } | null {
+  const { data, width, height } = imageData;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha > 10) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return null;
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+function getPixelIndex(width: number, x: number, y: number): number {
+  return (y * width + x) * 4;
+}
+
+function getColorDistanceSquared(data: Uint8ClampedArray, indexA: number, indexB: number): number {
+  const dr = data[indexA] - data[indexB];
+  const dg = data[indexA + 1] - data[indexB + 1];
+  const db = data[indexA + 2] - data[indexB + 2];
+  return dr * dr + dg * dg + db * db;
+}
+
+function collectBorderSeedPoints(width: number, height: number): Array<{ x: number; y: number }> {
+  const seeds: Array<{ x: number; y: number }> = [];
+  const stepX = Math.max(1, Math.floor(width / 18));
+  const stepY = Math.max(1, Math.floor(height / 18));
+
+  for (let x = 0; x < width; x += stepX) {
+    seeds.push({ x, y: 0 });
+    seeds.push({ x, y: height - 1 });
+  }
+  for (let y = 0; y < height; y += stepY) {
+    seeds.push({ x: 0, y });
+    seeds.push({ x: width - 1, y });
+  }
+
+  seeds.push({ x: 0, y: 0 });
+  seeds.push({ x: width - 1, y: 0 });
+  seeds.push({ x: 0, y: height - 1 });
+  seeds.push({ x: width - 1, y: height - 1 });
+  return seeds;
+}
+
+function stripReferenceBackground(imageData: ImageData): ImageData {
+  const { data, width, height } = imageData;
+  if (width < 8 || height < 8) {
+    return imageData;
+  }
+
+  const output = new ImageData(new Uint8ClampedArray(data), width, height);
+  const visited = new Uint8Array(width * height);
+  const queue: Array<{ x: number; y: number; seedIndex: number }> = [];
+  const COLOR_THRESHOLD_SQ = 48 * 48;
+  const EDGE_BRIGHTNESS_THRESHOLD = 240;
+
+  const seeds = collectBorderSeedPoints(width, height);
+  for (const seed of seeds) {
+    const idx = getPixelIndex(width, seed.x, seed.y);
+    const alpha = output.data[idx + 3];
+    const brightness = (output.data[idx] + output.data[idx + 1] + output.data[idx + 2]) / 3;
+    if (alpha < 10 || brightness > EDGE_BRIGHTNESS_THRESHOLD) {
+      queue.push({ x: seed.x, y: seed.y, seedIndex: idx });
+      continue;
+    }
+    queue.push({ x: seed.x, y: seed.y, seedIndex: idx });
+  }
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+    const flatIndex = current.y * width + current.x;
+    if (visited[flatIndex]) continue;
+    visited[flatIndex] = 1;
+
+    const pixelIndex = getPixelIndex(width, current.x, current.y);
+    const alpha = output.data[pixelIndex + 3];
+    if (alpha < 10) {
+      output.data[pixelIndex + 3] = 0;
+    } else {
+      const distanceSq = getColorDistanceSquared(output.data, pixelIndex, current.seedIndex);
+      if (distanceSq > COLOR_THRESHOLD_SQ) {
+        continue;
+      }
+      output.data[pixelIndex + 3] = 0;
+    }
+
+    const neighbors = [
+      { x: current.x - 1, y: current.y },
+      { x: current.x + 1, y: current.y },
+      { x: current.x, y: current.y - 1 },
+      { x: current.x, y: current.y + 1 },
+    ];
+
+    for (const neighbor of neighbors) {
+      if (neighbor.x < 0 || neighbor.y < 0 || neighbor.x >= width || neighbor.y >= height) {
+        continue;
+      }
+      const neighborFlat = neighbor.y * width + neighbor.x;
+      if (visited[neighborFlat]) continue;
+      queue.push({ x: neighbor.x, y: neighbor.y, seedIndex: current.seedIndex });
+    }
+  }
+
+  const strippedBounds = getOpaqueBounds(output);
+  if (!strippedBounds) {
+    return imageData;
+  }
+
+  const originalBounds = getOpaqueBounds(imageData);
+  if (!originalBounds) {
+    return imageData;
+  }
+
+  const strippedArea = strippedBounds.width * strippedBounds.height;
+  const originalArea = originalBounds.width * originalBounds.height;
+  if (strippedArea < originalArea * 0.12) {
+    return imageData;
+  }
+
+  return output;
+}
+
+function getImageDataFromImage(
+  img: HTMLImageElement,
+  crop?: NormalizedCropRect
+): ImageData {
+  const sourceCanvas = document.createElement('canvas');
+  sourceCanvas.width = img.naturalWidth || img.width;
+  sourceCanvas.height = img.naturalHeight || img.height;
+  const sourceCtx = sourceCanvas.getContext('2d');
+  if (!sourceCtx) {
+    throw new Error('无法创建源图片 Canvas 上下文');
+  }
+
+  sourceCtx.drawImage(img, 0, 0);
+  const fullImageData = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  return cropImageData(fullImageData, crop);
+}
+
+function normalizeImageData(
+  sourceImageData: ImageData,
+  {
+    size = 96,
+    paddingRatio = 0.06,
+    backgroundColor = '#ffffff',
+  }: Omit<ImageCompareOptions, 'threshold'> = {}
+): ImageData {
+  const bounds = getOpaqueBounds(sourceImageData) ?? {
+    x: 0,
+    y: 0,
+    width: sourceImageData.width,
+    height: sourceImageData.height,
+  };
+
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = size;
+  outputCanvas.height = size;
+  const outputCtx = outputCanvas.getContext('2d');
+  if (!outputCtx) {
+    throw new Error('无法创建输出图片 Canvas 上下文');
+  }
+
+  outputCtx.fillStyle = backgroundColor;
+  outputCtx.fillRect(0, 0, size, size);
+
+  const innerSize = size * (1 - paddingRatio * 2);
+  const scale = Math.min(innerSize / bounds.width, innerSize / bounds.height);
+  const drawWidth = bounds.width * scale;
+  const drawHeight = bounds.height * scale;
+  const dx = (size - drawWidth) / 2;
+  const dy = (size - drawHeight) / 2;
+
+  outputCtx.drawImage(
+    (() => {
+      const inputCanvas = document.createElement('canvas');
+      inputCanvas.width = sourceImageData.width;
+      inputCanvas.height = sourceImageData.height;
+      const inputCtx = inputCanvas.getContext('2d');
+      if (!inputCtx) {
+        throw new Error('无法创建输入图片 Canvas 上下文');
+      }
+      inputCtx.putImageData(sourceImageData, 0, 0);
+      return inputCanvas;
+    })(),
+    bounds.x,
+    bounds.y,
+    bounds.width,
+    bounds.height,
+    dx,
+    dy,
+    drawWidth,
+    drawHeight
+  );
+
+  return outputCtx.getImageData(0, 0, size, size);
+}
+
+function clampCropRect(crop: NormalizedCropRect): NormalizedCropRect {
+  const x = Math.min(Math.max(crop.x, 0), 0.95);
+  const y = Math.min(Math.max(crop.y, 0), 0.95);
+  const width = Math.min(Math.max(crop.width, 0.05), 1 - x);
+  const height = Math.min(Math.max(crop.height, 0.05), 1 - y);
+  return { x, y, width, height };
+}
+
+function cropImageData(imageData: ImageData, crop?: NormalizedCropRect): ImageData {
+  if (!crop) {
+    return imageData;
+  }
+
+  const rect = clampCropRect(crop);
+  const sx = Math.max(0, Math.min(imageData.width - 1, Math.round(rect.x * imageData.width)));
+  const sy = Math.max(0, Math.min(imageData.height - 1, Math.round(rect.y * imageData.height)));
+  const ex = Math.max(sx + 1, Math.min(imageData.width, Math.round((rect.x + rect.width) * imageData.width)));
+  const ey = Math.max(sy + 1, Math.min(imageData.height, Math.round((rect.y + rect.height) * imageData.height)));
+  const width = ex - sx;
+  const height = ey - sy;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('无法创建裁切 Canvas 上下文');
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+  return ctx.getImageData(sx, sy, width, height);
+}
+
+function getSimilarityFromImageData(
+  data1: ImageData,
+  data2: ImageData,
+  threshold: number
+): number {
+  const diffPixels = pixelmatch(
+    data1.data,
+    data2.data,
+    null,
+    data1.width,
+    data1.height,
+    { threshold }
+  );
+
+  const totalPixels = data1.width * data1.height;
+  return 1 - diffPixels / totalPixels;
+}
+
+function cropNormalizedImageData(imageData: ImageData, crop: NormalizedCropRect): ImageData {
+  const rect = clampCropRect(crop);
+  const sx = Math.max(0, Math.min(imageData.width - 1, Math.round(rect.x * imageData.width)));
+  const sy = Math.max(0, Math.min(imageData.height - 1, Math.round(rect.y * imageData.height)));
+  const ex = Math.max(sx + 1, Math.min(imageData.width, Math.round((rect.x + rect.width) * imageData.width)));
+  const ey = Math.max(sy + 1, Math.min(imageData.height, Math.round((rect.y + rect.height) * imageData.height)));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('无法创建局部裁切 Canvas 上下文');
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+  return ctx.getImageData(sx, sy, ex - sx, ey - sy);
+}
+
+function getPortraitSimilarity(
+  normalizedReference: ImageData,
+  normalizedCandidate: ImageData,
+  threshold: number,
+  portraitMode: PortraitCompareMode = 'normal'
+): number {
+  const regions: Array<{ crop: NormalizedCropRect; weight: number }> = portraitMode === 'expression'
+    ? [
+      { crop: { x: 0.18, y: 0.14, width: 0.64, height: 0.62 }, weight: 0.18 },
+      { crop: { x: 0.22, y: 0.18, width: 0.56, height: 0.16 }, weight: 0.22 },
+      { crop: { x: 0.22, y: 0.22, width: 0.56, height: 0.14 }, weight: 0.24 },
+      { crop: { x: 0.24, y: 0.34, width: 0.52, height: 0.14 }, weight: 0.14 },
+      { crop: { x: 0.30, y: 0.48, width: 0.34, height: 0.12 }, weight: 0.22 },
+    ]
+    : [
+      { crop: { x: 0, y: 0, width: 1, height: 1 }, weight: 0.20 },
+      { crop: { x: 0.16, y: 0.08, width: 0.68, height: 0.72 }, weight: 0.35 },
+      { crop: { x: 0.22, y: 0.22, width: 0.56, height: 0.20 }, weight: 0.25 },
+      { crop: { x: 0.30, y: 0.48, width: 0.34, height: 0.16 }, weight: 0.20 },
+    ];
+
+  let weightedScore = 0;
+  let totalWeight = 0;
+
+  for (const region of regions) {
+    const refRegion = cropNormalizedImageData(normalizedReference, region.crop);
+    const candidateRegion = cropNormalizedImageData(normalizedCandidate, region.crop);
+    const score = getSimilarityFromImageData(refRegion, candidateRegion, threshold);
+    weightedScore += score * region.weight;
+    totalWeight += region.weight;
+  }
+
+  return totalWeight > 0 ? weightedScore / totalWeight : 0;
 }
 
 /**
@@ -61,6 +411,81 @@ export async function getImageSimilarity(
   // 返回相似度 (0-1)
   const totalPixels = img1.width * img1.height;
   return 1 - diffPixels / totalPixels;
+}
+
+export async function getNormalizedImageSimilarity(
+  url1: string,
+  url2: string,
+  options: ImageCompareOptions = {}
+): Promise<number> {
+  const {
+    threshold = 0.1,
+    size = 96,
+    paddingRatio = 0.06,
+    backgroundColor = '#ffffff',
+    crop,
+    portraitMode = 'normal',
+  } = options;
+
+  const [img1, img2] = await Promise.all([loadImage(url1), loadImage(url2)]);
+  const data1 = normalizeImageData(stripReferenceBackground(getImageDataFromImage(img1, crop)), { size, paddingRatio, backgroundColor });
+  const data2 = normalizeImageData(getImageDataFromImage(img2), { size, paddingRatio, backgroundColor });
+  return getPortraitSimilarity(data1, data2, threshold, portraitMode);
+}
+
+export async function rankImageCandidates(
+  referenceUrl: string,
+  candidates: RankedImageCandidate[],
+  options: ImageCompareOptions & {
+    onProgress?: (current: number, total: number) => void;
+  } = {}
+): Promise<RankedImageResult[]> {
+  const {
+    threshold = 0.1,
+    size = 96,
+    paddingRatio = 0.06,
+    backgroundColor = '#ffffff',
+    crop,
+    portraitMode = 'normal',
+    onProgress,
+  } = options;
+
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const referenceImage = await loadImage(referenceUrl);
+  const referenceData = normalizeImageData(
+    stripReferenceBackground(getImageDataFromImage(referenceImage, crop)),
+    { size, paddingRatio, backgroundColor }
+  );
+  const results: RankedImageResult[] = [];
+  let completed = 0;
+
+  for (const candidate of candidates) {
+    try {
+      const candidateImage = await loadImage(candidate.url);
+      const candidateData = normalizeImageData(
+        getImageDataFromImage(candidateImage),
+        { size, paddingRatio, backgroundColor }
+      );
+      results.push({
+        id: candidate.id,
+        similarity: getPortraitSimilarity(referenceData, candidateData, threshold, portraitMode),
+      });
+    } catch (error) {
+      handleError(error, undefined, { context: `头像比对失败: ${candidate.id}` });
+      results.push({
+        id: candidate.id,
+        similarity: 0,
+      });
+    } finally {
+      completed += 1;
+      onProgress?.(completed, candidates.length);
+    }
+  }
+
+  return results.sort((a, b) => b.similarity - a.similarity);
 }
 
 /**

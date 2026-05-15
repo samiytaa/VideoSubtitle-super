@@ -1,14 +1,15 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEnvFile } from "node:process";
+import { runtimePaths } from "./runtime-paths.js";
 
-const envFile = join(process.cwd(), ".env");
+const envFile = runtimePaths.envFile;
 
 if (existsSync(envFile)) {
-  loadEnvFile();
+  loadEnvFile(envFile);
 }
 
-const dataDirectory = join(process.cwd(), "data");
+const dataDirectory = runtimePaths.dataDirectory;
 
 mkdirSync(dataDirectory, { recursive: true });
 
@@ -20,7 +21,7 @@ export const config = Object.freeze({
   dataFile: join(dataDirectory, "app.json"),
   sessionCookieName: "ds_reverse_session",
   sessionTtlMs: 1000 * 60 * 60 * 24 * 7,
-  requestBodyLimitBytes: 110 * 1024 * 1024,
+  requestBodyLimitBytes: 1024 * 1024 * 1024,
   deepseekBaseUrl: "https://chat.deepseek.com",
   powWasmUrl: "https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm",
   powProtectedPaths: new Set([

@@ -7,6 +7,8 @@ interface ChapterPreviewProps {
   chapterIndex: number;
   chapters: Chapter[];
   currentChapterIndex: number;
+  activeInsertMenuIndex: number | null;
+  activeNarrationConvertMenuIndex: number | null;
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
   onChapterClick: (index: number) => void;
   renderBlock: (index: number) => React.ReactNode;
@@ -17,6 +19,8 @@ const ChapterPreview: React.FC<ChapterPreviewProps> = ({
   chapterIndex,
   chapters,
   currentChapterIndex,
+  activeInsertMenuIndex,
+  activeNarrationConvertMenuIndex,
   scrollContainerRef,
   onChapterClick,
   renderBlock
@@ -29,32 +33,48 @@ const ChapterPreview: React.FC<ChapterPreviewProps> = ({
     overscan: 8
   });
   const virtualItems = virtualizer.getVirtualItems();
+  const shouldFallbackRender = !scrollContainerRef?.current && chapter.blocks.length > 0;
 
   return (
     <div key={chapterKey} className="mb-0">
-      <div className="bg-[#e8e8e0] p-5 rounded-lg border border-[#d0d0c8]">
-        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
-          {virtualItems.map((virtualItem) => (
-            <div
-              key={virtualItem.key}
-              ref={virtualizer.measureElement}
-              data-index={virtualItem.index}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                transform: `translateY(${virtualItem.start}px)`
-              }}
-            >
-              {renderBlock(virtualItem.index)}
-            </div>
-          ))}
-        </div>
+      <div className="bg-[#e8e8e0] px-5 pt-5 pb-2 rounded-lg border border-[#d0d0c8]">
+        {shouldFallbackRender ? (
+          <div className="space-y-0">
+            {chapter.blocks.map((_, index) => (
+              <React.Fragment key={`${chapterKey}-${index}`}>
+                {renderBlock(index)}
+              </React.Fragment>
+            ))}
+          </div>
+        ) : (
+          <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
+            {virtualItems.map((virtualItem) => (
+              <div
+                key={virtualItem.key}
+                ref={virtualizer.measureElement}
+                data-index={virtualItem.index}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualItem.start}px)`,
+                  zIndex:
+                    activeInsertMenuIndex === virtualItem.index ||
+                    activeNarrationConvertMenuIndex === virtualItem.index
+                      ? 60
+                      : 0
+                }}
+              >
+                {renderBlock(virtualItem.index)}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {chapters[0]?.format !== 'general' && (
-        <div className="flex justify-center gap-3 pt-4 pb-2">
+        <div className="flex justify-center gap-3 pt-3 pb-0">
           <button
             onClick={() => currentChapterIndex > 0 && onChapterClick(currentChapterIndex - 1)}
             disabled={currentChapterIndex === 0}

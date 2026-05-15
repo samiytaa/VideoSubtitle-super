@@ -49,15 +49,28 @@
   "build": {
     "appId": "com.video.subtitle.extractor",
     "productName": "视频字幕截取工具",
+    "icon": "integrated/web2api/public/favicon.ico",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "electron/**/*",
-      "integrated/web2api/**/*"
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "integrated/web2api",
+        "to": "app-resources/integrated/web2api",
+        "filter": [
+          "src/**/*",
+          "public/**/*",
+          "package.json",
+          "node_modules/ffmpeg-static/**/*"
+        ]
+      }
     ],
     "win": {
+      "icon": "integrated/web2api/public/favicon.ico",
       "target": [
         {
           "target": "nsis",

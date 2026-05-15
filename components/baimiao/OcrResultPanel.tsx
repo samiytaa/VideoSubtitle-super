@@ -17,7 +17,7 @@ const OcrResultPanel: React.FC<OcrResultPanelProps> = ({ text, minHeightClassNam
         </div>
         {actionSlot || (text ? <span className="text-[10px] text-gray-400">{text.length} 字符</span> : null)}
       </div>
-      <div className="flex-1 p-4 overflow-auto">
+      <div className="flex-1 p-4 overflow-auto max-h-96">
         {text ? (
           <pre className="text-sm text-gray-700 whitespace-pre-wrap wrap-break-word leading-relaxed">{text}</pre>
         ) : (

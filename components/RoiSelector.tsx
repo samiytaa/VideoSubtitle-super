@@ -6,18 +6,30 @@ import {
   Pause,
   Play,
   Timer,
+  X,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ExtractedFrame, ROI, RoiPreset, VideoFile } from '../types';
 import { formatTimestampDisplay, generateFilename } from '../utils/filenameUtils';
 import { useNotifier } from './Notifications';
 import { handleError } from '../utils/errorHandler';
-import PresetPanel from './roiSelector/PresetPanel';
-import QuickProcessDialog from './roiSelector/QuickProcessDialog';
+import PresetCard from './roiSelector/PresetCard';
+import CategoryProcessOptions from './roiSelector/CategoryProcessOptions';
 import SavePresetDialog from './roiSelector/SavePresetDialog';
+import SaveDialoguePresetDialog from './roiSelector/SaveDialoguePresetDialog';
+import SaveLocationPresetDialog from './roiSelector/SaveLocationPresetDialog';
 import VideoUploadPlaceholder from './roiSelector/VideoUploadPlaceholder';
+import QuickProcessPanel from './QuickProcessPanel';
 import { formatTimeHms, getSkipSubtitleRegionsFromPreset } from './roiSelector/roiSelectorUtils';
 import { usePresets } from './roiSelector/usePresets';
+import {
+  getPresetCategory,
+  getDefaultQuickProcessPrefs,
+  loadQuickProcessPrefs,
+  QuickProcessPrefs,
+  subscribeQuickProcessPrefs,
+  updateQuickProcessPrefs,
+} from '../utils/quickProcessPrefs';
 
 /**
  * Z-Index 层级规范：
@@ -45,12 +57,16 @@ interface RoiSelectorProps {
     autoDeduplicationDialogue: boolean;
     autoDeduplicationLocation: boolean;
     frameInterval?: number;
+    skipSubtitleDialogue?: boolean;
+    skipSubtitleLocation?: boolean;
   }) => void;
   isProcessing?: boolean;
-  progress?: { current: number; total: number; message: string; stage?: 'extracting' | 'deduplicating' };
+  progress?: { current: number; total: number; message: string; stage?: 'extracting' | 'extracting-dialogue' | 'extracting-location' | 'deduplicating' };
   onReplaceVideo?: () => void;
   onClearVideo?: () => void;
   onUpload?: (video: VideoFile) => void;
+  quickProcessSrtFile?: File | null;
+  onSrtFileChange?: (file: File | null) => void;
 }
 
 const RoiSelector: React.FC<RoiSelectorProps> = ({
@@ -65,6 +81,8 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
   onReplaceVideo,
   onClearVideo,
   onUpload,
+  quickProcessSrtFile,
+  onSrtFileChange,
 }) => {
   const videoStateKey = `video_state_${video?.id ?? 'none'}`;
 
@@ -108,16 +126,12 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
   const [isCaptured, setIsCaptured] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [currentPresetName, setCurrentPresetName] = useState<string | null>(initialState.currentPresetName);
-  const [showSavePresetDialog, setShowSavePresetDialog] = useState(false);
-  const [showQuickProcessDialog, setShowQuickProcessDialog] = useState(false);
-  const [activePresetTab, setActivePresetTab] = useState<'dialogue' | 'location'>('dialogue');
-  const [quickSrtFile, setQuickSrtFile] = useState<File | null>(null);
-  const [quickDialoguePresetName, setQuickDialoguePresetName] = useState<string>(() => {
-    try { return localStorage.getItem('quickProcess_dialoguePreset') ?? ''; } catch { return ''; }
-  });
-  const [quickLocationPresetName, setQuickLocationPresetName] = useState<string>(() => {
-    try { return localStorage.getItem('quickProcess_locationPreset') ?? ''; } catch { return ''; }
-  });
+  const [showSaveDialogueDialog, setShowSaveDialogueDialog] = useState(false);
+  const [showSaveLocationDialog, setShowSaveLocationDialog] = useState(false);
+  const [quickProcessPrefsState, setQuickProcessPrefsState] = useState<QuickProcessPrefs>(() => ({
+    ...getDefaultQuickProcessPrefs(),
+    ...loadQuickProcessPrefs(),
+  }));
 
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
@@ -129,6 +143,8 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const notifier = useNotifier();
+  const isPortraitVideo = !!video && (video.height > video.width);
+  const playerViewportClass = 'w-full aspect-[2/3] max-h-[480px]';
 
   const { presets, deletePreset, renamePreset, setAsDefaultPreset, addPreset } = usePresets();
 
@@ -224,6 +240,12 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
     if (videoRef.current) videoRef.current.playbackRate = playbackRate;
   }, [playbackRate]);
 
+  useEffect(() => {
+    return subscribeQuickProcessPrefs((prefs) => {
+      setQuickProcessPrefsState(prev => ({ ...prev, ...prefs }));
+    });
+  }, []);
+
   // --- 预设操作 ---
   const applyPreset = (preset: RoiPreset) => {
     const newCropBox = {
@@ -234,21 +256,34 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
     };
     setCropBox(newCropBox);
     setCurrentPresetName(preset.name);
+    const presetCategory = getPresetCategory(preset, preset.category ?? 'dialogue');
+    updateQuickProcessPrefs(
+      presetCategory === 'dialogue'
+        ? { selectedDialoguePreset: preset.name }
+        : { selectedLocationPreset: preset.name },
+    );
     const skip = getSkipSubtitleRegionsFromPreset(preset);
     if (skip !== undefined) {
       onConfirm(newCropBox, { startTime, endTime }, skip);
     }
   };
 
-  const savePreset = () => {
+  const selectedDialoguePresetName = quickProcessPrefsState.selectedDialoguePreset;
+  const selectedLocationPresetName = quickProcessPrefsState.selectedLocationPreset;
+
+  const savePreset = (category: 'dialogue' | 'location') => {
     if (cropBox.width <= 0 || cropBox.height <= 0) {
       notifier.addToast('当前选区无效，无法保存。', 'error');
       return;
     }
-    setShowSavePresetDialog(true);
+    if (category === 'dialogue') {
+      setShowSaveDialogueDialog(true);
+    } else {
+      setShowSaveLocationDialog(true);
+    }
   };
 
-  const handleSavePreset = (name: string, category: 'dialogue' | 'location') => {
+  const handleSaveDialoguePreset = (name: string) => {
     const x_px = Math.round((cropBox.x / 100) * (video?.width ?? 1920));
     const y_px = Math.round((cropBox.y / 100) * (video?.height ?? 1080));
     const w_px = Math.round((cropBox.width / 100) * (video?.width ?? 1920));
@@ -261,10 +296,29 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
       h_ratio: cropBox.height / 100,
       description: `X=${x_px}, Y=${y_px}, ${w_px}×${h_px}`,
       isDefault: false,
-      category,
+      category: 'dialogue',
     });
-    setShowSavePresetDialog(false);
-    notifier.addToast(`预设 "${name}" 已保存`, 'success');
+    setShowSaveDialogueDialog(false);
+    notifier.addToast(`对话预设 "${name}" 已保存`, 'success');
+  };
+
+  const handleSaveLocationPreset = (name: string) => {
+    const x_px = Math.round((cropBox.x / 100) * (video?.width ?? 1920));
+    const y_px = Math.round((cropBox.y / 100) * (video?.height ?? 1080));
+    const w_px = Math.round((cropBox.width / 100) * (video?.width ?? 1920));
+    const h_px = Math.round((cropBox.height / 100) * (video?.height ?? 1080));
+    addPreset({
+      name,
+      x_ratio: cropBox.x / 100,
+      y_ratio: cropBox.y / 100,
+      w_ratio: cropBox.width / 100,
+      h_ratio: cropBox.height / 100,
+      description: `X=${x_px}, Y=${y_px}, ${w_px}×${h_px}`,
+      isDefault: false,
+      category: 'location',
+    });
+    setShowSaveLocationDialog(false);
+    notifier.addToast(`地点预设 "${name}" 已保存`, 'success');
   };
 
   // --- 像素坐标 ---
@@ -411,25 +465,41 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
     <div className="flex flex-col gap-6 p-4">
       <canvas ref={captureCanvasRef} className="hidden" />
 
-      {/* 第一行：播放器 + 预设库 */}
-      <div className="flex flex-col lg:flex-row gap-6">
-        {/* 左侧：播放器 */}
-        <div className="grow flex flex-col gap-4 relative">
+      {/* 三列横行：播放器 + 预设库 + 公共处理区 */}
+      <div className="flex flex-col lg:flex-row gap-6 items-stretch">
+        {/* 第一列：播放器 */}
+        <div
+          className={`flex flex-col gap-4 relative min-w-0 w-full ${isFullscreen ? '' : 'max-w-[28rem]'} ${isPortraitVideo ? 'lg:grow-0' : 'grow'}`}
+        >
           {!video ? (
-            <VideoUploadPlaceholder onUpload={onUpload} />
+            <VideoUploadPlaceholder onUpload={onUpload} className={playerViewportClass} />
           ) : (
             <div className="rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div
               ref={playerAreaRef}
               className={`relative bg-black overflow-hidden group flex items-center justify-center transition-all isolate ${
-                isFullscreen ? 'w-full h-full z-200' : 'z-10 h-[calc(100vh-400px)] min-h-[400px]'
+                isFullscreen
+                  ? 'w-full h-full z-200'
+                  : isPortraitVideo
+                  ? `z-10 px-3 py-4 ${playerViewportClass}`
+                  : `z-10 ${playerViewportClass}`
               }`}
               onMouseEnter={() => setShowControls(true)}
               onMouseLeave={() => setShowControls(false)}
             >
+              {/* 清除视频按钮 - 右上角 */}
+              {onClearVideo && (
+                <button
+                  onClick={onClearVideo}
+                  className="absolute top-3 right-3 z-50 p-2 bg-black/50 hover:bg-red-500 text-white rounded-lg transition-all hover:scale-110 backdrop-blur-sm"
+                  title="清空视频"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
               <div
                 ref={videoWrapperRef}
-                className="relative h-full"
+                className={isPortraitVideo && !isFullscreen ? 'relative h-full w-auto max-w-full' : 'relative h-full'}
                 style={{ aspectRatio: `${video?.width ?? 16}/${video?.height ?? 9}` }}
               >
                 <video
@@ -513,66 +583,59 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
                 </div>
               </div>
             </div>
-            {/* 时间控制面板 */}
-            <div className="bg-white border-t border-gray-200 p-3">
-            <div className="flex items-start justify-between">
-              <div className="flex-1 flex items-start">
-                {video && onClearVideo && (
-                  <button
-                    onClick={onClearVideo}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-red-50 hover:text-red-600 border border-gray-200 hover:border-red-200 rounded-lg transition-colors"
-                    title="清空视频"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                    清空视频
-                  </button>
-                )}
-              </div>
-
-              <div className="flex items-start gap-3">
-                {/* 开始时间 */}
-                <div className="flex flex-col gap-1.5">
-                  <div className="px-2.5 py-1.5 bg-emerald-50 rounded-lg border border-emerald-200">
-                    <div className="font-mono text-sm font-bold text-emerald-700">{formatTimestampDisplay(startTime)}</div>
+            </div>
+          )}
+          
+          {/* 时间控制面板 - 始终显示 */}
+          <div className="rounded-xl border border-gray-200 shadow-sm overflow-hidden bg-white">
+            <div className="p-3">
+              {/* 时间控制区域 - 紧凑两行布局 */}
+              <div className="flex flex-col gap-1.5">
+                {/* 第一行：时间显示 */}
+                <div className="flex gap-2 items-center">
+                  <div className={`px-3 py-1.5 rounded-lg border flex-1 ${!video ? 'bg-gray-50 border-gray-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                    <div className={`font-mono text-sm font-bold text-center ${!video ? 'text-gray-400' : 'text-emerald-700'}`}>{formatTimestampDisplay(startTime)}</div>
                   </div>
+                  <div className={`px-3 py-1.5 rounded-lg border flex-1 ${!video ? 'bg-gray-50 border-gray-200' : 'bg-rose-50 border-rose-200'}`}>
+                    <div className={`font-mono text-sm font-bold text-center ${!video ? 'text-gray-400' : 'text-rose-700'}`}>{formatTimestampDisplay(endTime)}</div>
+                  </div>
+                  <div className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border flex-1 ${!video ? 'bg-gray-50 border-gray-200' : 'bg-indigo-50 border-indigo-200'}`}>
+                    <Timer className={`w-3.5 h-3.5 shrink-0 ${!video ? 'text-gray-400' : 'text-indigo-600'}`} />
+                    <div className={`font-mono text-sm font-bold ${!video ? 'text-gray-400' : 'text-indigo-700'}`}>{formatTimestampDisplay(currentTime)}</div>
+                  </div>
+                </div>
+                
+                {/* 第二行：操作按钮 */}
+                <div className="flex gap-2">
                   <button
                     onClick={() => setStartTime(currentTime)}
-                    className="px-2.5 py-1 text-xs font-semibold text-white bg-emerald-500 rounded-lg hover:bg-emerald-600 transition-all hover:scale-105 whitespace-nowrap"
+                    disabled={!video}
+                    className={`flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap ${
+                      !video
+                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        : 'text-white bg-emerald-500 hover:bg-emerald-600 hover:scale-105'
+                    }`}
                   >
                     开始时间
                   </button>
-                </div>
-
-                {/* 结束时间 */}
-                <div className="flex flex-col gap-1.5">
-                  <div className="px-2.5 py-1.5 bg-rose-50 rounded-lg border border-rose-200">
-                    <div className="font-mono text-sm font-bold text-rose-700">{formatTimestampDisplay(endTime)}</div>
-                  </div>
                   <button
                     onClick={() => setEndTime(currentTime)}
-                    className="px-2.5 py-1 text-xs font-semibold text-white bg-rose-500 rounded-lg hover:bg-rose-600 transition-all hover:scale-105 whitespace-nowrap"
+                    disabled={!video}
+                    className={`flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap ${
+                      !video
+                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        : 'text-white bg-rose-500 hover:bg-rose-600 hover:scale-105'
+                    }`}
                   >
                     结束时间
                   </button>
-                </div>
-              </div>
-
-              {/* 当前时间 + 截取按钮 */}
-              <div className="flex-1 flex justify-end">
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-50 rounded-lg border border-indigo-200">
-                    <Timer className="w-4 h-4 text-indigo-600 shrink-0" />
-                    <div className="font-mono text-sm font-bold text-indigo-700">{formatTimestampDisplay(currentTime)}</div>
-                  </div>
                   <button
                     onClick={captureCurrentFrame}
-                    disabled={isPlaying}
-                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all whitespace-nowrap ${
+                    disabled={!video || isPlaying}
+                    className={`flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap ${
                       isCaptured
                         ? 'bg-emerald-500 text-white'
-                        : isPlaying
+                        : !video || isPlaying
                         ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                         : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105'
                     }`}
@@ -583,78 +646,112 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
               </div>
             </div>
             </div>
-            </div>
-          )}
         </div>
 
-        {/* 右侧：视频信息 + 预设库 */}
+        {/* 右侧区域：第一行并排预设卡片 + 第二行字幕处理 */}
         {!isFullscreen && (
-          <div className="w-full lg:w-80 shrink-0 flex flex-col gap-4">
+          <div className="flex-1 min-w-0 flex flex-col gap-4 h-full">
 
-            {/* 预设库面板 */}
-            <PresetPanel
-              presets={presets}
-              currentPresetName={currentPresetName}
-              activeTab={activePresetTab}
-              onTabChange={setActivePresetTab}
-              onApply={applyPreset}
-              onAdd={savePreset}
-              onDelete={deletePreset}
-              onRename={renamePreset}
-              onSetDefault={setAsDefaultPreset}
-            />
+            {/* 第一行：对话预设 + 地点预设 并排 */}
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1 min-w-0">
+                <PresetCard
+                  category="dialogue"
+                  presets={(Object.values(presets) as RoiPreset[]).filter(p =>
+                    p.category === 'dialogue' || p.name.includes('对话') || p.name.includes('【对话】')
+                  )}
+                  currentPresetName={currentPresetName}
+                  selectedPresetName={selectedDialoguePresetName}
+                  onApply={applyPreset}
+                  onAdd={() => savePreset('dialogue')}
+                  onDelete={deletePreset}
+                  onRename={renamePreset}
+                  onSetDefault={setAsDefaultPreset}
+                  optionsContent={
+                    <CategoryProcessOptions
+                      category="dialogue"
+                      enabled={quickProcessPrefsState.captureDialogue}
+                      skipSubtitle={quickProcessPrefsState.skipSubtitleDialogue}
+                      autoDeduplication={quickProcessPrefsState.autoDeduplicationDialogue}
+                      hasSrtFile={!!quickProcessSrtFile}
+                      isProcessing={isProcessing ?? false}
+                      onEnabledChange={(checked) => updateQuickProcessPrefs({ captureDialogue: checked })}
+                      onSkipSubtitleChange={(checked) => updateQuickProcessPrefs({ skipSubtitleDialogue: checked })}
+                      onAutoDeduplicationChange={(checked) => updateQuickProcessPrefs({ autoDeduplicationDialogue: checked })}
+                    />
+                  }
+                />
+              </div>
+              <div className="flex-1 min-w-0">
+                <PresetCard
+                  category="location"
+                  presets={(Object.values(presets) as RoiPreset[]).filter(p =>
+                    p.category === 'location' || p.name.includes('地点') || p.name.includes('【地点】')
+                  )}
+                  currentPresetName={currentPresetName}
+                  selectedPresetName={selectedLocationPresetName}
+                  onApply={applyPreset}
+                  onAdd={() => savePreset('location')}
+                  onDelete={deletePreset}
+                  onRename={renamePreset}
+                  onSetDefault={setAsDefaultPreset}
+                  optionsContent={
+                    <CategoryProcessOptions
+                      category="location"
+                      enabled={quickProcessPrefsState.captureLocation}
+                      skipSubtitle={quickProcessPrefsState.skipSubtitleLocation}
+                      autoDeduplication={quickProcessPrefsState.autoDeduplicationLocation}
+                      hasSrtFile={!!quickProcessSrtFile}
+                      isProcessing={isProcessing ?? false}
+                      onEnabledChange={(checked) => updateQuickProcessPrefs({ captureLocation: checked })}
+                      onSkipSubtitleChange={(checked) => updateQuickProcessPrefs({ skipSubtitleLocation: checked })}
+                      onAutoDeduplicationChange={(checked) => updateQuickProcessPrefs({ autoDeduplicationLocation: checked })}
+                    />
+                  }
+                />
+              </div>
+            </div>
 
+            {/* 第二行：字幕上传 + 一键处理 */}
+            {onQuickProcess && onSrtFileChange && (
+              <div className="mt-auto">
+                <QuickProcessPanel
+                  video={video ?? null}
+                  srtFile={quickProcessSrtFile ?? null}
+                  onSrtFileChange={onSrtFileChange}
+                  timeRange={{ startTime, endTime }}
+                  isProcessing={isProcessing ?? false}
+                  progress={progress}
+                  onConfirm={(file, dialoguePreset, locationPreset, timeRange, captureType, autoDeduplicationDialogue, autoDeduplicationLocation, frameInterval, skipSubtitleDialogue, skipSubtitleLocation) => {
+                    onQuickProcess({ srtFile: file, dialoguePreset, locationPreset, timeRange, captureType, autoDeduplicationDialogue, autoDeduplicationLocation, frameInterval, skipSubtitleDialogue, skipSubtitleLocation });
+                  }}
+                />
+              </div>
+            )}
 
           </div>
         )}
       </div>
 
-      {/* 保存预设对话框 */}
-      {showSavePresetDialog && (
-        <SavePresetDialog
+      {/* 保存对话预设对话框 */}
+      {showSaveDialogueDialog && (
+        <SaveDialoguePresetDialog
           video={video}
           cropBox={cropBox}
           presets={presets}
-          onSave={handleSavePreset}
-          onCancel={() => setShowSavePresetDialog(false)}
+          onSave={handleSaveDialoguePreset}
+          onCancel={() => setShowSaveDialogueDialog(false)}
         />
       )}
 
-      {/* 一键处理对话框 */}
-      {showQuickProcessDialog && onQuickProcess && (
-        <QuickProcessDialog
+      {/* 保存地点预设对话框 */}
+      {showSaveLocationDialog && (
+        <SaveLocationPresetDialog
           video={video}
+          cropBox={cropBox}
           presets={presets}
-          defaultPresetName={currentPresetName ?? ''}
-          isProcessing={isProcessing ?? false}
-          progress={progress}
-          timeRange={{ startTime, endTime }}
-          srtFile={quickSrtFile}
-          selectedDialoguePresetName={quickDialoguePresetName}
-          selectedLocationPresetName={quickLocationPresetName}
-          onClose={() => setShowQuickProcessDialog(false)}
-          onSrtFileChange={setQuickSrtFile}
-          onPresetChange={(name, type) => {
-            if (type === 'dialogue') {
-              setQuickDialoguePresetName(name);
-              try { localStorage.setItem('quickProcess_dialoguePreset', name); } catch {}
-            } else {
-              setQuickLocationPresetName(name);
-              try { localStorage.setItem('quickProcess_locationPreset', name); } catch {}
-            }
-          }}
-          onConfirm={(srtFile, dialoguePreset, locationPreset, timeRange, captureType, autoDeduplicationDialogue, autoDeduplicationLocation, frameInterval) => {
-            onQuickProcess({
-              srtFile,
-              dialoguePreset,
-              locationPreset,
-              timeRange,
-              captureType,
-              autoDeduplicationDialogue,
-              autoDeduplicationLocation,
-              frameInterval,
-            });
-          }}
+          onSave={handleSaveLocationPreset}
+          onCancel={() => setShowSaveLocationDialog(false)}
         />
       )}
     </div>

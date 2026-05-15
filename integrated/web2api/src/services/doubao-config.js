@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { runtimePaths } from "../runtime-paths.js";
 
-const dataDir = join(process.cwd(), "data");
+const dataDir = runtimePaths.dataDirectory;
 mkdirSync(dataDir, { recursive: true });
 
 export const doubaoConfig = {

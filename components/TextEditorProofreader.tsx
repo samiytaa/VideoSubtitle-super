@@ -22,6 +22,8 @@ import { useMenuState } from './textEditorProofreader/hooks/useMenuState';
 import { useBlockOperations } from './textEditorProofreader/hooks/useBlockOperations';
 import { DialogueBlockItem, NarrationBlockItem, NarrationThoughtBlockItem } from './textEditorProofreader/components/blocks';
 import { handleError } from '../utils/errorHandler';
+import { normalizeAvatarName } from '../utils/avatarMap';
+import { convertTextMainline, convertTextMitan, reverseConvertText } from '../utils/textConversionUtils';
 
 interface TextEditorProofreaderProps {
   extractedFrames?: ExtractedFrame[];
@@ -47,6 +49,10 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
 }) => {
   const { addToast, showConfirm, showAlert } = useNotifier();
   const [inputText, setInputText, inputStorage] = useLocalStorageState<string>(STORAGE_KEYS.inputText, '', {
+    serialize: (value) => value,
+    deserialize: (raw) => raw
+  });
+  const [originalInputText, setOriginalInputText] = useLocalStorageState<string>(STORAGE_KEYS.originalInputText, '', {
     serialize: (value) => value,
     deserialize: (raw) => raw
   });
@@ -135,7 +141,21 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
   } = useEditorUiState();
 
   // 人名头像历史记录（每个人名保存最近3次使用的头像）
-  const [characterAvatarHistory, setCharacterAvatarHistory] = useLocalStorageState<Record<string, string[]>>(STORAGE_KEYS.characterAvatarHistory, {});
+  const [characterAvatarHistory, setCharacterAvatarHistory] = useLocalStorageState<Record<string, string[]>>(
+    STORAGE_KEYS.characterAvatarHistory,
+    {},
+    {
+      deserialize: (raw) => {
+        const parsed = JSON.parse(raw) as Record<string, string[]>;
+        return Object.fromEntries(
+          Object.entries(parsed || {}).map(([character, avatars]) => [
+            character,
+            Array.isArray(avatars) ? avatars.map((avatar) => normalizeAvatarName(avatar)).filter(Boolean) : []
+          ])
+        );
+      }
+    }
+  );
 
   // 输入区域折叠状态（原“左侧折叠”）
   const [isInputCollapsed, setIsInputCollapsed] = useLocalStorageState<boolean>(
@@ -151,6 +171,8 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
   const blockRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
+  const hasAutoHydratedInputRef = useRef(false);
+  const hasAutoHydratedOriginalRef = useRef(false);
 
 
 
@@ -170,6 +192,31 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
       setCurrentChapterIndex(0);
     }
   }, [chapters, currentChapterIndex, characterName, setCurrentChapterIndex]);
+
+  useEffect(() => {
+    if (hasAutoHydratedInputRef.current) return;
+    if (!inputText.trim() || chapters.length > 0) return;
+
+    const parsedChapters = parseText(inputText);
+    if (parsedChapters.length === 0) return;
+
+    hasAutoHydratedInputRef.current = true;
+    setChapters(parsedChapters);
+    setCharacterName(parsedChapters[0]?.character || '');
+    setIsInputCollapsed(true);
+  }, [inputText, chapters.length, setChapters, setIsInputCollapsed]);
+
+  useEffect(() => {
+    if (hasAutoHydratedOriginalRef.current) return;
+    if (originalInputText.trim() || !inputText.trim()) return;
+
+    const mode = inputText.includes('{{密探故事录入|') ? 'mitan' : 'mainline';
+    const reversed = reverseConvertText(inputText, mode);
+    if (!reversed.success || !reversed.output.trim()) return;
+
+    hasAutoHydratedOriginalRef.current = true;
+    setOriginalInputText(reversed.output);
+  }, [inputText, originalInputText, setOriginalInputText]);
   const chapterRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const {
     activeInsertMenuIndex,
@@ -201,12 +248,45 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
 
   const pushAvatarHistory = (targetCharacter: string, avatarName: string) => {
     if (!targetCharacter || !avatarName) return;
+    const normalizedAvatarName = normalizeAvatarName(avatarName);
     setCharacterAvatarHistory(prev => {
       const history = prev[targetCharacter] || [];
-      const newHistory = [avatarName, ...history.filter(a => a !== avatarName)].slice(0, 3);
+      const newHistory = [normalizedAvatarName, ...history.filter(a => a !== normalizedAvatarName)].slice(0, 3);
       return { ...prev, [targetCharacter]: newHistory };
     });
   };
+
+  const detectConversionMode = useCallback((): 'mitan' | 'mainline' => {
+    if (chapters[0]?.format === 'spy') return 'mitan';
+    if (inputText.includes('{{密探故事录入|')) return 'mitan';
+    if (/《.+?》/.test(originalInputText) && /==\d+==/.test(originalInputText)) return 'mitan';
+    return 'mainline';
+  }, [chapters, inputText, originalInputText]);
+
+  const syncConvertedFromOriginal = useCallback(() => {
+    if (!originalInputText.trim()) {
+      return { success: false as const, error: '请先输入原文' };
+    }
+
+    const mode = detectConversionMode();
+    const result = mode === 'mitan'
+      ? convertTextMitan(originalInputText)
+      : convertTextMainline(originalInputText);
+
+    if (!result.success) {
+      return { success: false as const, error: result.error || '转换失败' };
+    }
+
+    let nextConvertedText = result.output;
+    if (nextConvertedText.includes('{{嵌套分歧|')) {
+      const jsTag = '{{JS|Qiantao.js}}';
+      nextConvertedText = nextConvertedText.replace(jsTag, '');
+      nextConvertedText = jsTag + nextConvertedText;
+    }
+
+    setInputText(nextConvertedText);
+    return { success: true as const, text: nextConvertedText };
+  }, [detectConversionMode, originalInputText, setInputText]);
 
   const commitChapters = (nextChapters: Chapter[]) => {
     setChapters(nextChapters);
@@ -237,14 +317,50 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     setInputText(text);
   };
 
+  const handleOriginalTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    setOriginalInputText(text);
+
+    if (!text.trim()) {
+      setInputText('');
+      return;
+    }
+
+    const conversion = detectConversionMode() === 'mitan'
+      ? convertTextMitan(text)
+      : convertTextMainline(text);
+
+    if (!conversion.success) {
+      return;
+    }
+
+    let nextConvertedText = conversion.output;
+    if (nextConvertedText.includes('{{嵌套分歧|')) {
+      const jsTag = '{{JS|Qiantao.js}}';
+      nextConvertedText = nextConvertedText.replace(jsTag, '');
+      nextConvertedText = jsTag + nextConvertedText;
+    }
+    setInputText(nextConvertedText);
+  };
+
   const handleStartProofreading = () => {
-    if (!inputText.trim()) {
+    let processedText = inputText;
+
+    if (originalInputText.trim()) {
+      const conversion = syncConvertedFromOriginal();
+      if (!conversion.success) {
+        addToast(conversion.error, 'error');
+        return;
+      }
+      processedText = conversion.text;
+    }
+
+    if (!processedText.trim()) {
       addToast('请先输入文本', 'error');
       return;
     }
 
     // 如果存在嵌套分歧，确保 {{JS|Qiantao.js}} 在最前面
-    let processedText = inputText;
     if (processedText.includes('{{嵌套分歧|')) {
       const jsTag = '{{JS|Qiantao.js}}';
       processedText = processedText.replace(jsTag, '');
@@ -272,9 +388,27 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     }
 
     try {
-      // 将 }} 替换为 }}\n 增加换行符
       const textWithNewlines = inputText.replace(/\}\}/g, '}}\n');
       await navigator.clipboard.writeText(textWithNewlines);
+      setCopySuccess(true);
+      addToast('复制成功', 'success');
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      handleError(err, { addToast }, {
+        context: '复制失败',
+        userMessage: '复制失败，请重试',
+      });
+    }
+  };
+
+  const handleCopyOriginalText = async () => {
+    if (!originalInputText.trim()) {
+      addToast('没有可复制的内容', 'error');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(originalInputText);
       setCopySuccess(true);
       addToast('复制成功', 'success');
       setTimeout(() => setCopySuccess(false), 2000);
@@ -529,18 +663,47 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     setShowQuickReplaceDialog(true);
   };
 
+  const handleOpenBatchAvatarPicker = () => {
+    if (selectedCount === 0) {
+      addToast('请先选择要批量设置头像的对话', 'error');
+      return;
+    }
+    setShowBatchAvatarPicker(true);
+  };
+
   const handleBatchClearAvatarConfirm = async () => {
+    if (selectedCount === 0) {
+      addToast('请先选择要批量清空头像的对话', 'error');
+      return;
+    }
+
     const confirmed = await showConfirm({
       title: '确认清空',
       message: `确定要清空选中的 ${selectedCount} 个对话的头像吗？`
     });
     if (confirmed) {
-      batchClearAvatar();
+      const result = batchClearAvatar();
+      if (result?.affectedCount) {
+        addToast(`已清空 ${result.affectedCount} 个对话的头像`, 'success');
+      }
     }
   };
 
   const batchSetAvatar = bulkActions.batchSetAvatar;
   const batchClearAvatar = bulkActions.batchClearAvatar;
+
+  const handleBatchSelectAvatar = (avatarName: string) => {
+    const result = batchSetAvatar(avatarName);
+    if (!result?.affectedCount) {
+      addToast('没有可批量设置头像的对话', 'error');
+      return;
+    }
+
+    const characterSummary = result.affectedCharacters.length > 0
+      ? `（涉及：${result.affectedCharacters.join('、')}）`
+      : '';
+    addToast(`已为 ${result.affectedCount} 个对话批量设置头像${characterSummary}`, 'success');
+  };
 
   // 获取当前小节中的所有人名（去重）
   const getCurrentChapterCharacters = (): string[] => {
@@ -702,6 +865,7 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
           });
         }}
         showConfirm={showConfirm}
+        showAlert={showAlert}
         extractedFrames={extractedFrames}
         onDeleteFrames={onDeleteFrames}
         onJumpToTime={onJumpToTime}
@@ -754,6 +918,7 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
         onInsertBlock={insertBlock}
         onDeleteBlock={deleteBlock}
         showConfirm={showConfirm}
+        showAlert={showAlert}
         extractedFrames={extractedFrames}
         onDeleteFrames={onDeleteFrames}
         onJumpToTime={onJumpToTime}
@@ -815,7 +980,9 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
 
   return (
     <EditorBlockContext.Provider value={editorBlockContextValue}>
-      <div className="flex flex-col gap-4 h-full min-h-0">
+      <div className="flex flex-1 flex-row h-full min-h-0 overflow-hidden bg-white">
+      {/* 左侧主内容区 */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
       <EditorModals
         showSearchDialog={showSearchDialog}
         searchKeyword={searchKeyword}
@@ -829,7 +996,7 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
         onCloseAvatarPicker={() => setShowAvatarPicker(false)}
         editingAvatar={editingAvatar}
         showBatchAvatarPicker={showBatchAvatarPicker}
-        onBatchSelectAvatar={batchSetAvatar}
+        onBatchSelectAvatar={handleBatchSelectAvatar}
         onCloseBatchAvatarPicker={() => setShowBatchAvatarPicker(false)}
         showNestedAvatarPicker={showNestedAvatarPicker}
         onSelectNestedAvatar={(avatarName) => { setEditingNestedBlockAvatar(avatarName); setShowNestedAvatarPicker(false); }}
@@ -857,27 +1024,6 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
         onCaptureFrame={onCaptureFrame}
       />
 
-      <InputPanel
-        isCollapsed={isInputCollapsed}
-        inputText={inputText}
-        copySuccess={copySuccess}
-        leftScrollRef={leftScrollRef}
-        onExpand={() => setIsInputCollapsed(false)}
-        onCopy={handleCopyText}
-        onClear={async () => {
-          const confirmed = await showConfirm({
-            title: '确认清空',
-            message: '确定要清空文本吗？'
-          });
-          if (confirmed) {
-            inputStorage.clear();
-            setChapters([]);
-          }
-        }}
-        onStartProofreading={handleStartProofreading}
-        onTextChange={handleTextChange}
-      />
-
       {chapters.length > 0 && chapters[0].format !== 'general' && (
         <ChapterNavigator
           chapters={chapters}
@@ -897,16 +1043,18 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
             onOpenQuickReplace={handleOpenQuickReplaceDialog}
             onToggleMultiSelectMode={toggleMultiSelectMode}
             onToggleSelectAllDialogues={toggleSelectAllDialogues}
-            onOpenBatchAvatarPicker={() => setShowBatchAvatarPicker(true)}
+            onOpenBatchAvatarPicker={handleOpenBatchAvatarPicker}
             onBatchClearAvatarConfirm={handleBatchClearAvatarConfirm}
           />
 
-          <div ref={rightScrollRef} className="flex-1 min-h-0 overflow-y-auto pt-4">
+          <div ref={rightScrollRef} className="flex-1 min-h-0 overflow-y-auto">
             <ChapterPreview
               chapter={chapters[currentChapterIndex]}
               chapterIndex={currentChapterIndex}
               chapters={chapters}
               currentChapterIndex={currentChapterIndex}
+              activeInsertMenuIndex={activeInsertMenuIndex}
+              activeNarrationConvertMenuIndex={activeNarrationConvertMenuIndex}
               scrollContainerRef={rightScrollRef}
               onChapterClick={handleChapterClick}
               renderBlock={(index) => renderBlock(chapters[currentChapterIndex].blocks[index], index)}
@@ -914,6 +1062,34 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
           </div>
         </div>
         )}
+      </div>{/* 左侧主内容区结束 */}
+
+      {/* 右侧输入文本收缩展开栏 */}
+        <InputPanel
+          isCollapsed={isInputCollapsed}
+          originalText={originalInputText}
+          convertedText={inputText}
+          copySuccess={copySuccess}
+          leftScrollRef={leftScrollRef}
+          onExpand={() => setIsInputCollapsed(false)}
+          onCollapse={() => setIsInputCollapsed(true)}
+          onCopyOriginal={handleCopyOriginalText}
+          onCopyConverted={handleCopyText}
+        onClear={async () => {
+          const confirmed = await showConfirm({
+            title: '确认清空',
+            message: '确定要清空文本吗？'
+          });
+          if (confirmed) {
+            inputStorage.clear();
+            setOriginalInputText('');
+            setChapters([]);
+          }
+        }}
+          onStartProofreading={handleStartProofreading}
+          onOriginalTextChange={handleOriginalTextChange}
+          onConvertedTextChange={handleTextChange}
+        />
       </div>
     </EditorBlockContext.Provider>
   );
