@@ -107,7 +107,7 @@ const Toast: React.FC<{ toast: ToastMessage; onDismiss: (id: number) => void }> 
 };
 
 // Modal Component
-const Modal: React.FC<{ isOpen: boolean; children: ReactNode; onClose?: () => void; }> = ({ isOpen, children, onClose }) => {
+function Modal({ isOpen, children, onClose }: { isOpen: boolean; children: ReactNode; onClose?: () => void }): React.ReactElement {
   return (
     <CenteredModal
       open={isOpen}
@@ -120,7 +120,7 @@ const Modal: React.FC<{ isOpen: boolean; children: ReactNode; onClose?: () => vo
       {children}
     </CenteredModal>
   );
-};
+}
 
 // Provider
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -161,11 +161,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     });
   }, []);
   
-  const handleConfirmClose = () => {
-    if (confirmOptions) {
-        confirmOptions.onCancel();
-    }
-  }
+  const handleConfirmClose = () => confirmOptions?.onCancel();
 
   const showPrompt = useCallback((options: Omit<PromptOptions, 'onSubmit' | 'onCancel'>) => {
     return new Promise<string | null>((resolve) => {
@@ -178,11 +174,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     });
   }, []);
   
-  const handlePromptClose = () => {
-    if (promptOptions) {
-        promptOptions.onCancel();
-    }
-  }
+  const handlePromptClose = () => promptOptions?.onCancel();
 
   const handlePromptSubmit = (e: React.FormEvent) => {
       e.preventDefault();
@@ -201,11 +193,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     });
   }, []);
 
-  const handleAlertClose = () => {
-    if (alertOptions) {
-      alertOptions.onClose();
-    }
-  };
+  const handleAlertClose = () => alertOptions?.onClose();
 
   const value = { addToast, showConfirm, showChoice, showPrompt, showAlert };
 
@@ -263,12 +251,14 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
         </div>
         <div className="flex flex-row-reverse gap-2 px-6 py-4 bg-gray-50 border-t border-gray-100">
           {choiceOptions?.buttons.map((btn) => {
-            const variantClass =
-              btn.variant === 'primary'
-                ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
-                : btn.variant === 'danger'
-                ? 'bg-red-600 text-white hover:bg-red-700 shadow-sm'
-                : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50';
+            let variantClass: string;
+            if (btn.variant === 'primary') {
+              variantClass = 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm';
+            } else if (btn.variant === 'danger') {
+              variantClass = 'bg-red-600 text-white hover:bg-red-700 shadow-sm';
+            } else {
+              variantClass = 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50';
+            }
             return (
               <button
                 key={btn.value}

@@ -12,8 +12,8 @@ interface ProcessingProgress {
 }
 
 interface UseDeduplicationProps {
-  extractedFramesRef: React.RefObject<ExtractedFrame[]>;
-  setExtractedFrames: React.Dispatch<React.SetStateAction<ExtractedFrame[]>>;
+  extractedFramesRef: { current: ExtractedFrame[] };
+  setExtractedFrames: (value: ExtractedFrame[] | ((prev: ExtractedFrame[]) => ExtractedFrame[])) => void;
   setProcessingProgress: (progress: ProcessingProgress) => void;
   notifier: Notifier;
 }

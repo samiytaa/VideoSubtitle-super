@@ -1,4 +1,4 @@
-import { FileCheck, Image as ImageIcon, LayoutGrid, MessageCircle, ScanText, Video } from 'lucide-react';
+import { FileCheck, Image as ImageIcon, LayoutGrid, MessageCircle, ScanText } from 'lucide-react';
 import React from 'react';
 
 export type AppTab = 'extract' | 'gallery' | 'proofread' | 'proofread2' | 'aichat' | 'baimiao';
@@ -10,44 +10,53 @@ type AppHeaderProps = {
   isAiChatProcessing?: boolean;
 };
 
-const AppHeader: React.FC<AppHeaderProps> = ({ activeTab, isProcessing, onChangeTab, isAiChatProcessing = false }) => {
-  const renderTabButton = (tab: AppTab, label: string, icon: React.ReactNode) => {
-    const disabled = (isProcessing && tab !== 'extract') || isAiChatProcessing;
-    return (
-      <button
-        onClick={() => !disabled && onChangeTab(tab)}
-        disabled={disabled}
-        title={disabled ? '处理中，请等待完成后再切换' : undefined}
-        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${activeTab === tab ? 'bg-indigo-50 text-indigo-700' : isProcessing || isAiChatProcessing ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
-      >
-        <span className="flex items-center gap-1.5">{icon} {label}</span>
-      </button>
-    );
-  };
+const TAB_CONFIG: Array<{ tab: AppTab; label: string; icon: React.ReactElement }> = [
+  { tab: 'extract',    label: '字幕截取', icon: <ImageIcon className="w-4 h-4" /> },
+  { tab: 'gallery',    label: '查看图片', icon: <LayoutGrid className="w-4 h-4" /> },
+  { tab: 'aichat',     label: 'AI处理',   icon: <MessageCircle className="w-4 h-4" /> },
+  { tab: 'proofread',  label: '文本转换', icon: <FileCheck className="w-4 h-4" /> },
+  { tab: 'proofread2', label: '文本校对', icon: <FileCheck className="w-4 h-4" /> },
+  { tab: 'baimiao',    label: '白描ocr',  icon: <ScanText className="w-4 h-4" /> },
+];
+
+function getTabClass(tab: AppTab, activeTab: AppTab, isBusy: boolean): string {
+  if (activeTab === tab) return 'bg-indigo-50 text-indigo-700';
+  if (isBusy) return 'text-gray-300 cursor-not-allowed';
+  return 'text-gray-600 hover:text-gray-900 hover:bg-gray-50';
+}
+
+function AppHeader({ activeTab, isProcessing, onChangeTab, isAiChatProcessing = false }: AppHeaderProps): React.ReactElement {
+  const isBusy = isProcessing || isAiChatProcessing;
 
   return (
     <header className="sticky top-0 z-50 bg-white pt-2 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex h-11 items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="bg-linear-to-br from-indigo-600 to-indigo-700 p-1.5 rounded-md shadow-sm">
-              <Video className="text-white w-4 h-4" />
-            </div>
-            <h1 className="text-lg font-semibold text-gray-900 hidden sm:block">视频字幕截取工具</h1>
+            <img src="/favicon.ico" alt="icon" className="w-7 h-7" />
+            <h1 className="text-lg font-semibold text-gray-900 hidden sm:block" style={{ fontFamily: "'QuanHengDuLiang', serif" }}>代号鸢剧情提取器</h1>
           </div>
 
           <nav className="flex space-x-1">
-            {renderTabButton('extract', '字幕截取', <ImageIcon className="w-4 h-4" />)}
-            {renderTabButton('gallery', '查看图片', <LayoutGrid className="w-4 h-4" />)}
-            {renderTabButton('aichat', 'AI处理', <MessageCircle className="w-4 h-4" />)}
-            {renderTabButton('proofread', '文本转换', <FileCheck className="w-4 h-4" />)}
-            {renderTabButton('proofread2', '文本校对', <FileCheck className="w-4 h-4" />)}
-            {renderTabButton('baimiao', '白描ocr', <ScanText className="w-4 h-4" />)}
+            {TAB_CONFIG.map(({ tab, label, icon }) => {
+              const disabled = (isProcessing && tab !== 'extract') || isAiChatProcessing;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => !disabled && onChangeTab(tab)}
+                  disabled={disabled}
+                  title={disabled ? '处理中，请等待完成后再切换' : undefined}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${getTabClass(tab, activeTab, isBusy)}`}
+                >
+                  <span className="flex items-center gap-1.5">{icon} {label}</span>
+                </button>
+              );
+            })}
           </nav>
         </div>
       </div>
     </header>
   );
-};
+}
 
 export default AppHeader;

@@ -151,8 +151,9 @@ const NestedChoiceGroup: React.FC<NestedChoiceGroupProps> = ({
     const startEdit = () => {
       onSetEditingNestedContent({ groupIndex: index, showIndex, bi });
       onSetEditingNestedBlockContent(b.content);
-      onSetEditingNestedBlockCharacter(b.character || '');
-      onSetEditingNestedBlockAvatar(b.avatarStyle || '');
+      const db = b as { character?: string; avatarStyle?: string };
+      onSetEditingNestedBlockCharacter(db.character || '');
+      onSetEditingNestedBlockAvatar(db.avatarStyle || '');
       onSetEditingNestedBlockNarrationType(b.type === 'narration-thought' ? 'narration-thought' : 'narration');
     };
 

@@ -11,7 +11,7 @@ interface UseGalleryPaginationOptions {
 
 interface UseGalleryPaginationResult {
   currentPage: number;
-  setCurrentPage: React.Dispatch<React.SetStateAction<number>>;
+  setCurrentPage: (value: number | ((prev: number) => number)) => void;
   itemsPerPage: number;
   setItemsPerPage: (n: number) => void;
   totalPages: number;

@@ -5,7 +5,7 @@ type LoadingOverlayProps = {
   visible: boolean;
 };
 
-const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ visible }) => {
+function LoadingOverlay({ visible }: LoadingOverlayProps): React.ReactElement | null {
   if (!visible) return null;
 
   return (
@@ -19,6 +19,6 @@ const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ visible }) => {
       </div>
     </div>
   );
-};
+}
 
 export default LoadingOverlay;

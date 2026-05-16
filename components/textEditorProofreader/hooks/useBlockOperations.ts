@@ -27,6 +27,22 @@ interface UseBlockOperationsParams {
   characterName: string;
 }
 
+type MutableBlockShape = ParsedBlock & {
+  character?: string;
+  avatarStyle?: string;
+};
+
+function setBlockType(block: ParsedBlock, type: MutableBlockShape['type']): void {
+  (block as MutableBlockShape).type = type;
+}
+
+function convertToDialogue(block: ParsedBlock, character: string): void {
+  const mutableBlock = block as MutableBlockShape;
+  mutableBlock.type = 'dialogue';
+  mutableBlock.character = character;
+  mutableBlock.avatarStyle = '';
+}
+
 export const useBlockOperations = ({
   blockRefs,
   startEditing,
@@ -75,32 +91,28 @@ export const useBlockOperations = ({
     },
     convertNarrationToThought: (blockIndex) => {
       updateBlock(blockIndex, (b) => {
-        if (b.type === 'narration') b.type = 'narration-thought';
+        if (b.type === 'narration') setBlockType(b, 'narration-thought');
       });
       closeNarrationConvertMenu();
     },
     convertNarrationToDialogue: (blockIndex) => {
       updateBlock(blockIndex, (b) => {
         if (b.type === 'narration' || b.type === 'narration-thought') {
-          (b as ParsedBlock).type = 'dialogue';
-          (b as Extract<ParsedBlock, { type: 'dialogue' }>).character = characterName || '角色名';
-          (b as Extract<ParsedBlock, { type: 'dialogue' }>).avatarStyle = '';
+          convertToDialogue(b, characterName || '角色名');
         }
       });
       closeNarrationConvertMenu();
     },
     convertThoughtToNarration: (blockIndex) => {
       updateBlock(blockIndex, (b) => {
-        if (b.type === 'narration-thought') b.type = 'narration';
+        if (b.type === 'narration-thought') setBlockType(b, 'narration');
       });
       closeNarrationConvertMenu();
     },
     convertThoughtToDialogueAsSelf: (blockIndex) => {
       updateBlock(blockIndex, (b) => {
         if (b.type === 'narration' || b.type === 'narration-thought') {
-          (b as ParsedBlock).type = 'dialogue';
-          (b as Extract<ParsedBlock, { type: 'dialogue' }>).character = '我';
-          (b as Extract<ParsedBlock, { type: 'dialogue' }>).avatarStyle = '';
+          convertToDialogue(b, '我');
         }
       });
       closeNarrationConvertMenu();
@@ -108,7 +120,7 @@ export const useBlockOperations = ({
     convertDialogueToNarration: (blockIndex) => {
       updateBlock(blockIndex, (b) => {
         if (b.type === 'dialogue') {
-          (b as ParsedBlock).type = 'narration';
+          setBlockType(b, 'narration');
         }
       });
     }

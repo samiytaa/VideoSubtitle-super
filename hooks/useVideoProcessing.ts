@@ -2,14 +2,14 @@ import { useCallback, useRef, useState } from 'react';
 import { ExtractionMode, ExtractionParams, ROI, RoiPreset, VideoFile } from '../types';
 import { useObjectURL } from './useObjectURL';
 
-interface ProcessingProgress {
+export interface ProcessingProgress {
   current: number;
   total: number;
   message: string;
   stage?: 'extracting' | 'extracting-dialogue' | 'extracting-location' | 'deduplicating';
 }
 
-interface NextStepInfo {
+export interface NextStepInfo {
   preset: RoiPreset;
   srtFile: File | null;
   frameInterval?: number;

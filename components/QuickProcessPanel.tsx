@@ -140,7 +140,14 @@ const QuickProcessPanel: React.FC<QuickProcessPanelProps> = ({
       if (!locationPreset) { notifier.addToast('请先选择一个地点坐标预设', 'warning'); return; }
     }
 
-    const captureType = captureDialogue && captureLocation ? 'both' : captureDialogue ? 'dialogue' : 'location';
+    let captureType: 'dialogue' | 'location' | 'both';
+    if (captureDialogue && captureLocation) {
+      captureType = 'both';
+    } else if (captureDialogue) {
+      captureType = 'dialogue';
+    } else {
+      captureType = 'location';
+    }
 
     onConfirm(
       srtFile,
@@ -249,23 +256,33 @@ interface StepDef {
   activeStage: QuickProgressBarProps['progress']['stage'];
 }
 
-const SpinIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg className={`animate-spin ${className ?? ''}`} fill="none" viewBox="0 0 24 24">
-    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-  </svg>
-);
+function SpinIcon({ className }: { className?: string }): React.ReactElement {
+  return (
+    <svg className={`animate-spin ${className ?? ''}`} fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+    </svg>
+  );
+}
 
-const CheckIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg className={className} fill="currentColor" viewBox="0 0 20 20">
-    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-  </svg>
-);
+function CheckIcon({ className }: { className?: string }): React.ReactElement {
+  return (
+    <svg className={className} fill="currentColor" viewBox="0 0 20 20">
+      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+const stepBarColorMap: Record<'blue' | 'green' | 'purple', string> = {
+  blue:   'bg-blue-400',
+  green:  'bg-green-400',
+  purple: 'bg-purple-400',
+};
 
 const stepColorMap = {
-  blue:   { bar: 'bg-blue-500',   text: 'text-blue-600',   activeBg: 'bg-blue-50 border-blue-200' },
-  green:  { bar: 'bg-green-500',  text: 'text-green-600',  activeBg: 'bg-green-50 border-green-200' },
-  purple: { bar: 'bg-purple-500', text: 'text-purple-600', activeBg: 'bg-purple-50 border-purple-200' },
+  blue:   { text: 'text-blue-600',   activeBg: 'bg-blue-50 border-blue-200' },
+  green:  { text: 'text-green-600',  activeBg: 'bg-green-50 border-green-200' },
+  purple: { text: 'text-purple-600', activeBg: 'bg-purple-50 border-purple-200' },
 };
 
 const QuickProgressBar: React.FC<QuickProgressBarProps> = ({
@@ -385,10 +402,7 @@ const QuickProgressBar: React.FC<QuickProgressBarProps> = ({
 
               <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    step.color === 'purple' ? 'bg-purple-400' :
-                    step.color === 'green' ? 'bg-green-400' : 'bg-blue-400'
-                  }`}
+                  className={`h-full rounded-full transition-all duration-300 ${stepBarColorMap[step.color]}`}
                   style={{ width: `${stepProgress}%` }}
                 />
               </div>

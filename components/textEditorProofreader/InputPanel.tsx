@@ -1,5 +1,5 @@
-import React, { useRef, useCallback, useEffect, useState, useImperativeHandle } from 'react';
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
+import React, { useRef, useCallback, useEffect, useState, useImperativeHandle, useMemo } from 'react';
+import { PanelRightClose, PanelRightOpen, FileText, ArrowRightLeft } from 'lucide-react';
 import { SIDE_PANEL_COLLAPSED_WIDTH } from '../panelConstants';
 
 interface InputPanelProps {
@@ -446,53 +446,130 @@ function buildAlignedRows(originalText: string, convertedText: string): AlignedR
   return rows;
 }
 
-function highlightText(text: string, keyword: string): React.ReactNode {
-  if (!keyword.trim()) return text || '\u00a0';
-  const index = text.indexOf(keyword);
-  if (index === -1) return text || '\u00a0';
-
-  return (
-    <>
-      {text.slice(0, index)}
-      <mark className="rounded bg-amber-200 px-0.5 text-gray-950">{text.slice(index, index + keyword.length)}</mark>
-      {text.slice(index + keyword.length)}
-    </>
-  );
-}
-
 interface AlignedTextGridProps {
   rows: AlignedRow[];
-  searchKeyword: string;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   activeRowIndex: number | null;
+  onOriginalRowChange: (rowIndex: number, newValue: string) => void;
+  onConvertedRowChange: (rowIndex: number, newValue: string) => void;
 }
+
+/** 单个可编辑单元格，避免每次父组件重渲染时重置光标 */
+const EditableCell = React.memo(({
+  value,
+  isActive,
+  isConverted,
+  onChange,
+}: {
+  value: string;
+  isActive: boolean;
+  isConverted?: boolean;
+  onChange: (newValue: string) => void;
+}) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const isComposing = useRef(false);
+  const lastValueRef = useRef(value);
+
+  // 仅当外部 value 与内部不同时才同步（避免编辑中被覆盖）
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (value === lastValueRef.current) return;
+    lastValueRef.current = value;
+    // 不在焦点中才覆盖，防止打字时被重置
+    if (document.activeElement !== el) {
+      el.textContent = value;
+    }
+  }, [value]);
+
+  // 初始化
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.textContent = value;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleInput = useCallback(() => {
+    if (isComposing.current) return;
+    const el = ref.current;
+    if (!el) return;
+    const text = el.textContent ?? '';
+    lastValueRef.current = text;
+    onChange(text);
+  }, [onChange]);
+
+  const handleCompositionEnd = useCallback(() => {
+    isComposing.current = false;
+    handleInput();
+  }, [handleInput]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(document.createTextNode(text));
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    handleInput();
+  }, [handleInput]);
+
+  return (
+    <div
+      ref={ref}
+      contentEditable
+      suppressContentEditableWarning
+      onInput={handleInput}
+      onCompositionStart={() => { isComposing.current = true; }}
+      onCompositionEnd={handleCompositionEnd}
+      onPaste={handlePaste}
+      className={[
+        'min-h-9 min-w-0 px-3 py-1.5 text-[13px] leading-6 text-gray-950 whitespace-pre-wrap break-words outline-none',
+        'focus:bg-indigo-50/60 focus:ring-1 focus:ring-inset focus:ring-indigo-300',
+        isConverted ? 'font-mono' : '',
+        isActive ? 'bg-amber-50 ring-1 ring-inset ring-amber-300' : '',
+      ].filter(Boolean).join(' ')}
+    />
+  );
+});
+EditableCell.displayName = 'EditableCell';
 
 const AlignedTextGrid: React.FC<AlignedTextGridProps> = ({
   rows,
-  searchKeyword,
   scrollRef,
   activeRowIndex,
+  onOriginalRowChange,
+  onConvertedRowChange,
 }) => (
   <div ref={scrollRef} className="flex-1 overflow-y-auto p-3">
     <div className="overflow-hidden rounded-md border border-gray-200">
       {rows.map((row, index) => (
         <div
-          key={`${index}-${row.original}-${row.converted}`}
+          key={index}
           data-row-index={index}
           className={`grid grid-cols-2 border-b border-gray-100 last:border-b-0 ${
             index % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'
           }`}
         >
-          <div className={`min-h-9 min-w-0 border-r border-gray-100 px-3 py-1.5 text-[13px] leading-6 text-gray-950 whitespace-pre-wrap break-words ${
-            activeRowIndex === index ? 'bg-amber-50 ring-1 ring-inset ring-amber-300' : ''
-          }`}>
-            {highlightText(row.original, searchKeyword)}
+          <div className="border-r border-gray-100">
+            <EditableCell
+              value={row.original}
+              isActive={activeRowIndex === index}
+              isConverted={false}
+              onChange={(v) => onOriginalRowChange(index, v)}
+            />
           </div>
-          <div className={`min-h-9 min-w-0 px-3 py-1.5 font-mono text-[13px] leading-6 text-gray-950 whitespace-pre-wrap break-words ${
-            activeRowIndex === index ? 'bg-amber-50 ring-1 ring-inset ring-amber-300' : ''
-          }`}>
-            {highlightText(row.converted, searchKeyword)}
-          </div>
+          <EditableCell
+            value={row.converted}
+            isActive={activeRowIndex === index}
+            isConverted={true}
+            onChange={(v) => onConvertedRowChange(index, v)}
+          />
         </div>
       ))}
     </div>
@@ -616,6 +693,7 @@ const InputPanel: React.FC<InputPanelProps> = ({
     const saved = localStorage.getItem('inputPanel_width');
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
+  const [inputMode, setInputMode] = useState<'none' | 'original' | 'converted'>('none');
   const originalEditorRef = useRef<InputEditorHandle>(null);
   const convertedEditorRef = useRef<InputEditorHandle>(null);
   const originalScrollRef = useRef<HTMLDivElement>(null);
@@ -627,12 +705,13 @@ const InputPanel: React.FC<InputPanelProps> = ({
   const isResizing = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
-  const alignedRows = buildAlignedRows(originalText, convertedText);
-  const comparisonMatchRows = comparisonSearchKeyword.trim()
-    ? alignedRows
+  const alignedRows = useMemo(() => buildAlignedRows(originalText, convertedText), [originalText, convertedText]);
+  const comparisonMatchRows = useMemo(() => {
+    if (!comparisonSearchKeyword.trim()) return [];
+    return alignedRows
       .map((row, index) => (row.original.includes(comparisonSearchKeyword) || row.converted.includes(comparisonSearchKeyword) ? index : -1))
-      .filter((index) => index >= 0)
-    : [];
+      .filter((index) => index >= 0);
+  }, [alignedRows, comparisonSearchKeyword]);
   const activeComparisonRowIndex = comparisonMatchRows[comparisonMatchIndex] ?? null;
 
   const scrollToAlignedRow = useCallback((rowIndex: number) => {
@@ -757,6 +836,36 @@ const InputPanel: React.FC<InputPanelProps> = ({
     syncScrollPosition('converted');
   }, [syncScrollPosition]);
 
+  // 修改"转换前"某行 → 重建 originalText，转换后自动重算
+  const handleOriginalRowChange = useCallback((rowIndex: number, newValue: string) => {
+    const newRows = alignedRows.map((row, i) =>
+      i === rowIndex ? { ...row, original: newValue } : row
+    );
+    const newOriginalText = newRows
+      .map((r) => r.original)
+      .filter((line) => line.trim() !== '')
+      .join('\n');
+    const fakeEvent = {
+      target: { value: newOriginalText },
+    } as React.ChangeEvent<HTMLTextAreaElement>;
+    onOriginalTextChange(fakeEvent);
+  }, [alignedRows, onOriginalTextChange]);
+
+  // 修改"转换后"某行 → 重建 convertedText（不影响转换前）
+  const handleConvertedRowChange = useCallback((rowIndex: number, newValue: string) => {
+    const newRows = alignedRows.map((row, i) =>
+      i === rowIndex ? { ...row, converted: newValue } : row
+    );
+    const newConvertedText = newRows
+      .map((r) => r.converted)
+      .filter((line) => line.trim() !== '')
+      .join('\n');
+    const fakeEvent = {
+      target: { value: newConvertedText },
+    } as React.ChangeEvent<HTMLTextAreaElement>;
+    onConvertedTextChange(fakeEvent);
+  }, [alignedRows, onConvertedTextChange]);
+
   return (
     <div
       className="border-l border-gray-200 bg-white shrink-0 flex flex-col relative transition-all duration-300 h-full"
@@ -801,16 +910,16 @@ const InputPanel: React.FC<InputPanelProps> = ({
           </div>
 
           {/* 操作按钮 */}
-          <div className="px-3 py-2 border-b border-gray-100 flex flex-wrap gap-1.5 shrink-0">
+          <div className="px-3 py-1.5 border-b border-gray-100 flex items-center gap-2 shrink-0">
             <button
               onClick={onClear}
-              className="flex-1 px-2 py-1.5 text-xs text-red-700 hover:bg-red-50 border border-red-200 rounded transition-colors"
+              className="px-3 py-1 text-xs text-red-700 hover:bg-red-50 border border-red-200 rounded transition-colors"
             >
               清空
             </button>
             <button
               onClick={onStartProofreading}
-              className="w-full px-2 py-1.5 text-xs text-white bg-indigo-600 rounded hover:bg-indigo-700 transition-colors"
+              className="flex-1 px-3 py-1 text-xs text-white bg-indigo-600 rounded hover:bg-indigo-700 transition-colors"
             >
               开始校对
             </button>
@@ -818,78 +927,140 @@ const InputPanel: React.FC<InputPanelProps> = ({
 
           {/* 双栏文本区域 */}
           <div className="flex-1 overflow-hidden p-2">
-            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
-              <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-1.5 shrink-0">
-                <input
-                  type="text"
-                  value={comparisonSearchKeyword}
-                  onChange={(e) => setComparisonSearchKeyword(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      jumpComparisonMatch(e.shiftKey ? -1 : 1);
-                    }
+            {/* 空状态：两边都为空时显示选择入口 */}
+            {!originalText && !convertedText && inputMode === 'none' ? (
+              <div className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-gray-200 bg-gray-50/50">
+                <p className="text-xs text-gray-400 select-none">选择从哪一侧开始输入</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setInputMode('original')}
+                    className="flex flex-col items-center gap-2 px-5 py-4 rounded-xl border border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 transition-colors group shadow-sm"
+                  >
+                    <FileText className="w-5 h-5 text-gray-400 group-hover:text-indigo-500 transition-colors" />
+                    <span className="text-xs font-medium text-gray-600 group-hover:text-indigo-600 transition-colors">转换前</span>
+                    <span className="text-[11px] text-gray-400 group-hover:text-indigo-400 transition-colors">输入原始文本</span>
+                  </button>
+                  <button
+                    onClick={() => setInputMode('converted')}
+                    className="flex flex-col items-center gap-2 px-5 py-4 rounded-xl border border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 transition-colors group shadow-sm"
+                  >
+                    <ArrowRightLeft className="w-5 h-5 text-gray-400 group-hover:text-indigo-500 transition-colors" />
+                    <span className="text-xs font-medium text-gray-600 group-hover:text-indigo-600 transition-colors">转换后</span>
+                    <span className="text-[11px] text-gray-400 group-hover:text-indigo-400 transition-colors">输入已转换文本</span>
+                  </button>
+                </div>
+              </div>
+            ) : !originalText && !convertedText && inputMode !== 'none' ? (
+              /* 单栏输入模式 */
+              <div className="flex h-full flex-col rounded-xl border border-gray-200 bg-white overflow-hidden">
+                <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between gap-2 shrink-0">
+                  <span className="text-xs font-semibold text-gray-700">
+                    {inputMode === 'original' ? '转换前' : '转换后'}
+                  </span>
+                  <button
+                    onClick={() => setInputMode('none')}
+                    className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    切换
+                  </button>
+                </div>
+                <div
+                  className="flex-1 overflow-auto p-3"
+                  style={{
+                    backgroundImage: 'repeating-linear-gradient(to bottom, rgba(248,250,252,0.0) 0, rgba(248,250,252,0.0) 2rem, rgba(99,102,241,0.045) 2rem, rgba(99,102,241,0.045) 4rem)',
                   }}
-                  placeholder="搜索对比内容"
-                  className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-gray-200 rounded outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <InputEditor
+                    value={inputMode === 'original' ? originalText : convertedText}
+                    onChange={(text) => {
+                      const fakeEvent = { target: { value: text } } as React.ChangeEvent<HTMLTextAreaElement>;
+                      if (inputMode === 'original') {
+                        onOriginalTextChange(fakeEvent);
+                      } else {
+                        onConvertedTextChange(fakeEvent);
+                      }
+                    }}
+                    placeholder={inputMode === 'original' ? '在此输入原始文本…' : '在此输入已转换文本…'}
+                    mode={inputMode === 'converted' ? 'converted' : 'original'}
+                  />
+                </div>
+              </div>
+            ) : (
+              /* 双栏对照视图 */
+              <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
+                <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-1.5 shrink-0">
+                  <input
+                    type="text"
+                    value={comparisonSearchKeyword}
+                    onChange={(e) => setComparisonSearchKeyword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        jumpComparisonMatch(e.shiftKey ? -1 : 1);
+                      }
+                    }}
+                    placeholder="搜索对比内容"
+                    className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-gray-200 rounded outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  <span className={`text-[11px] w-14 text-center ${comparisonSearchKeyword && comparisonMatchRows.length === 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                    {comparisonSearchKeyword ? `${comparisonMatchRows.length === 0 ? 0 : comparisonMatchIndex + 1}/${comparisonMatchRows.length}` : '--/--'}
+                  </span>
+                  <button
+                    onClick={() => jumpComparisonMatch(-1)}
+                    disabled={comparisonMatchRows.length === 0}
+                    className="px-2 py-1.5 text-xs text-gray-700 border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors"
+                  >
+                    上一个
+                  </button>
+                  <button
+                    onClick={() => jumpComparisonMatch(1)}
+                    disabled={comparisonMatchRows.length === 0}
+                    className="px-2 py-1.5 text-xs text-gray-700 border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors"
+                  >
+                    下一个
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 border-b border-gray-100">
+                  <div className="border-r border-gray-100">
+                    <div className="px-3 py-2 flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-gray-700">转换前</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-gray-400">{originalText ? `${originalText.split('\n').filter(Boolean).length} 行` : '0 行'}</span>
+                        <button
+                          onClick={onCopyOriginal}
+                          className={`px-2 py-1 text-[11px] rounded transition-colors ${
+                            copySuccess ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-100 border border-gray-200'
+                          }`}
+                        >
+                          {copySuccess ? '已复制' : '复制'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="px-3 py-2 flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-gray-700">转换后</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-gray-400">{convertedText ? `${convertedText.split('\n').filter(Boolean).length} 行` : '0 行'}</span>
+                        <button
+                          onClick={onCopyConverted}
+                          className="px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100 border border-gray-200 rounded transition-colors"
+                        >
+                          复制
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <AlignedTextGrid
+                  rows={alignedRows}
+                  scrollRef={leftScrollRef}
+                  activeRowIndex={activeComparisonRowIndex}
+                  onOriginalRowChange={handleOriginalRowChange}
+                  onConvertedRowChange={handleConvertedRowChange}
                 />
-                <span className={`text-[11px] w-14 text-center ${comparisonSearchKeyword && comparisonMatchRows.length === 0 ? 'text-red-500' : 'text-gray-500'}`}>
-                  {comparisonSearchKeyword ? `${comparisonMatchRows.length === 0 ? 0 : comparisonMatchIndex + 1}/${comparisonMatchRows.length}` : '--/--'}
-                </span>
-                <button
-                  onClick={() => jumpComparisonMatch(-1)}
-                  disabled={comparisonMatchRows.length === 0}
-                  className="px-2 py-1.5 text-xs text-gray-700 border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors"
-                >
-                  上一个
-                </button>
-                <button
-                  onClick={() => jumpComparisonMatch(1)}
-                  disabled={comparisonMatchRows.length === 0}
-                  className="px-2 py-1.5 text-xs text-gray-700 border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors"
-                >
-                  下一个
-                </button>
               </div>
-              <div className="grid grid-cols-2 border-b border-gray-100">
-                <div className="border-r border-gray-100">
-                  <div className="px-3 py-2 flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-gray-700">转换前</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-gray-400">{originalText ? `${originalText.split('\n').filter(Boolean).length} 行` : '0 行'}</span>
-                      <button
-                        onClick={onCopyOriginal}
-                        className={`px-2 py-1 text-[11px] rounded transition-colors ${
-                          copySuccess ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-100 border border-gray-200'
-                        }`}
-                      >
-                        {copySuccess ? '已复制' : '复制前'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <div className="px-3 py-2 flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-gray-700">转换后</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-gray-400">{convertedText ? `${convertedText.split('\n').filter(Boolean).length} 行` : '0 行'}</span>
-                      <button
-                        onClick={onCopyConverted}
-                        className="px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100 border border-gray-200 rounded transition-colors"
-                      >
-                        复制后
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <AlignedTextGrid
-                rows={alignedRows}
-                searchKeyword={comparisonSearchKeyword}
-                scrollRef={leftScrollRef}
-                activeRowIndex={activeComparisonRowIndex}
-              />
-            </div>
+            )}
           </div>
         </>
       )}

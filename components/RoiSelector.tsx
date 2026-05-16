@@ -461,6 +461,13 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
     />
   );
 
+  const captureButtonClass = (() => {
+    const base = 'flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap';
+    if (isCaptured) return `${base} bg-emerald-500 text-white`;
+    if (!video || isPlaying) return `${base} bg-gray-200 text-gray-400 cursor-not-allowed`;
+    return `${base} bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105`;
+  })();
+
   return (
     <div className="flex flex-col gap-6 p-4">
       <canvas ref={captureCanvasRef} className="hidden" />
@@ -632,13 +639,7 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
                   <button
                     onClick={captureCurrentFrame}
                     disabled={!video || isPlaying}
-                    className={`flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap ${
-                      isCaptured
-                        ? 'bg-emerald-500 text-white'
-                        : !video || isPlaying
-                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                        : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105'
-                    }`}
+                    className={captureButtonClass}
                   >
                     {isCaptured ? '截取成功' : '截取当前帧'}
                   </button>
