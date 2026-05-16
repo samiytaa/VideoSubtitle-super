@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:api\" \"vite\"",
     "dev:api": "node scripts/dev-api.mjs",
-    "build": "vite build",
+    "build": "node scripts/build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",

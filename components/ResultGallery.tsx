@@ -3,7 +3,6 @@ import { Image as ImageIcon, Layers, X, ChevronLeft, ChevronRight, Trash2, Sciss
 import { ExtractedFrame, MergedImage } from '../types';
 import { downloadAsZip } from '../utils/imageUtils';
 import { useNotifier } from './Notifications';
-import { removeDuplicateImagesAdvanced } from '../utils/imageComparisonUtils';
 import GalleryToolbar from './resultGallery/GalleryToolbar';
 import PaginationToolbar from './resultGallery/PaginationToolbar';
 import FrameCard from './resultGallery/FrameCard';
@@ -458,6 +457,7 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
     setIsDeduplicating(true);
     setDeduplicateProgress({ current: 0, total: count - 1 });
     try {
+      const { removeDuplicateImagesAdvanced } = await import('../utils/imageComparisonUtils');
       const keepIndices = await removeDuplicateImagesAdvanced(
         filteredFrames.map((f) => f.url),
         0.95,

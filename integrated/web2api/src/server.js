@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { config } from "./config.js";
 import { handlePrivateBaimiaoRequest, handleBaimiaoOcrRequest } from "./routes/baimiao-routes.js";
 import { handleVideoExtractionRequest } from "./routes/video-extraction-routes.js";
+import { handleAiProxyRequest } from "./routes/ai-proxy-routes.js";
 import { sendError, serveStaticFile } from "./utils/http.js";
 
 const isViteDev = process.env.VITE_DEV === "1";
@@ -12,7 +13,7 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   response.setHeader("access-control-allow-origin", "*");
-  response.setHeader("access-control-allow-headers", "content-type, authorization");
+  response.setHeader("access-control-allow-headers", "content-type, authorization, x-ai-target-url, x-ai-api-key");
   response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
 
   if (request.method === "OPTIONS") {
@@ -23,6 +24,9 @@ const server = createServer(async (request, response) => {
 
   try {
     if (url.pathname.startsWith("/api/")) {
+      const handledAiProxy = await handleAiProxyRequest(request, response, url);
+      if (handledAiProxy) return;
+
       const handledVideoExtraction = await handleVideoExtractionRequest(request, response, url);
       if (handledVideoExtraction) return;
 

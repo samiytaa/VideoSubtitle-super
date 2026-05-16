@@ -1,13 +1,6 @@
-import React, { useCallback, useEffect, useReducer, useRef } from 'react';
+import React, { Suspense, useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import AppHeader, { AppTab } from './components/app/AppHeader';
-import {
-  BaimiaoTab,
-  ExtractTab,
-  GalleryTab,
-  ProofreadEditorTab,
-  ProofreadTab,
-} from './components/app/AppTabs';
-import AiChatTab from './components/AiChatTab';
+import ExtractTab from './components/app/ExtractTab';
 import LoadingOverlay from './components/app/LoadingOverlay';
 import { NotificationProvider, useNotifier } from './components/Notifications';
 import ProcessingView from './components/ProcessingView';
@@ -24,6 +17,31 @@ type PendingDeduplication = {
   dialogue: boolean;
   location: boolean;
 } | null;
+type QuickProcessType = 'dialogue' | 'location' | 'both';
+type CaptureGroup = 'group1' | 'group2';
+
+interface QuickProcessOptions {
+  srtFile: File | null;
+  dialoguePreset: RoiPreset | null;
+  locationPreset: RoiPreset | null;
+  timeRange: { startTime: number; endTime: number };
+  captureType: QuickProcessType;
+  autoDeduplicationDialogue: boolean;
+  autoDeduplicationLocation: boolean;
+  frameInterval?: number;
+  skipSubtitleDialogue?: boolean;
+  skipSubtitleLocation?: boolean;
+}
+
+interface BuildExtractionParamsOptions {
+  baseParams: ExtractionParams;
+  srtFile: File | null;
+  timeRange: { startTime: number; endTime: number };
+  frameInterval?: number;
+  group: CaptureGroup;
+  skipSubtitle: boolean;
+  autoDeduplication: boolean;
+}
 
 interface AppState {
   activeTab: Tab;
@@ -43,21 +61,148 @@ const TAB_TO_PATH: Record<Tab, string> = {
   aichat: '/ai-chat',
 };
 
-const PATH_TO_TAB: Record<string, Tab> = Object.entries(TAB_TO_PATH).reduce(
-  (acc, [tab, path]) => {
-    acc[path] = tab as Tab;
-    return acc;
-  },
-  {} as Record<string, Tab>
-);
-PATH_TO_TAB['/ocr'] = 'aichat';
+const PATH_TO_TAB: Record<string, Tab> = {
+  '/':           'extract',
+  '/img':        'gallery',
+  '/convert':    'proofread',
+  '/proofread':  'proofread2',
+  '/baimiao-ocr':'baimiao',
+  '/ai-chat':    'aichat',
+  '/ocr':        'aichat',
+};
 
 const KNOWN_ROUTE_PATHS = Object.values(TAB_TO_PATH);
+const GalleryTab = React.lazy(() => import('./components/app/GalleryTab'));
+const ProofreadTab = React.lazy(() => import('./components/app/ProofreadTab'));
+const ProofreadEditorTab = React.lazy(() => import('./components/app/ProofreadEditorTab'));
+const BaimiaoTab = React.lazy(() => import('./components/app/BaimiaoTab'));
+const AiChatTab = React.lazy(() => import('./components/AiChatTab'));
 
-const getTabFromLocation = (): Tab =>
-  PATH_TO_TAB[getCurrentRoutePath(KNOWN_ROUTE_PATHS)] ?? 'extract';
+const tabLoadingFallback = (
+  <div className="flex min-h-[12rem] items-center justify-center text-sm text-gray-500">
+    正在加载页面...
+  </div>
+);
 
-const appReducer = (state: AppState, action: AppAction): AppState => {
+function getTabFromLocation(): Tab {
+  return PATH_TO_TAB[getCurrentRoutePath(KNOWN_ROUTE_PATHS)] ?? 'extract';
+}
+
+async function getVideoMetadata(sourceFile: File): Promise<VideoFile> {
+  const localPath = await resolveVideoLocalPath(sourceFile);
+
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(sourceFile);
+    const video = document.createElement('video');
+    video.preload = 'auto';
+    video.muted = true;
+
+    const buildVideoFile = (): VideoFile => ({
+      id: Math.random().toString(36).substr(2, 9),
+      file: sourceFile,
+      localPath,
+      name: sourceFile.name,
+      size: sourceFile.size,
+      duration: video.duration,
+      width: video.videoWidth,
+      height: video.videoHeight,
+      previewUrl: url,
+    });
+
+    const cleanup = () => {
+      video.removeEventListener('loadeddata', onLoadedData);
+      video.removeEventListener('durationchange', onDurationChange);
+      video.removeEventListener('error', onError);
+    };
+
+    const onLoadedData = () => {
+      if (!isFinite(video.duration) || video.duration === 0) return;
+      cleanup();
+      resolve(buildVideoFile());
+    };
+
+    const onDurationChange = () => {
+      if (isFinite(video.duration) && video.duration > 0) {
+        cleanup();
+        resolve(buildVideoFile());
+      }
+    };
+
+    const onError = () => {
+      cleanup();
+      URL.revokeObjectURL(url);
+      reject(new Error(`Failed to load video metadata for ${sourceFile.name}`));
+    };
+
+    video.addEventListener('loadeddata', onLoadedData);
+    video.addEventListener('durationchange', onDurationChange);
+    video.addEventListener('error', onError);
+    video.src = url;
+    video.load();
+  });
+}
+
+function presetToRoi(preset: RoiPreset): ROI {
+  return {
+    x: preset.x_ratio * 100,
+    y: preset.y_ratio * 100,
+    width: preset.w_ratio * 100,
+    height: preset.h_ratio * 100,
+  };
+}
+
+function waitForUi(ms: number = 100): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildExtractionParams(options: BuildExtractionParamsOptions): ExtractionParams {
+  const {
+    baseParams,
+    srtFile,
+    timeRange,
+    frameInterval,
+    group,
+    skipSubtitle,
+    autoDeduplication,
+  } = options;
+
+  if (srtFile) {
+    return {
+      ...baseParams,
+      mode: ExtractionMode.SRT,
+      srtFile,
+      startTime: timeRange.startTime,
+      endTime: timeRange.endTime,
+      selectedGroup: group,
+      skipSubtitleRegions: skipSubtitle,
+      autoDeduplication,
+    };
+  }
+
+  return {
+    ...baseParams,
+    mode: ExtractionMode.FRAME,
+    srtFile: undefined,
+    interval: frameInterval ?? 30,
+    startTime: timeRange.startTime,
+    endTime: timeRange.endTime,
+    selectedGroup: group,
+    skipSubtitleRegions: false,
+    autoDeduplication,
+  };
+}
+
+function getSkipSubtitleRegions(
+  category: 'dialogue' | 'location',
+  srtFile: File | null,
+  options: QuickProcessOptions
+): boolean {
+  if (!srtFile) return false;
+  if (category === 'dialogue') return options.skipSubtitleDialogue ?? false;
+  return options.skipSubtitleLocation ?? true;
+}
+
+function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'SET_ACTIVE_TAB':
       if (state.activeTab === action.payload) return state;
@@ -67,7 +212,7 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     default:
       return state;
   }
-};
+}
 
 const App: React.FC = () => {
   return (
@@ -84,12 +229,13 @@ const AppContent: React.FC = () => {
     pendingDeduplication: null,
   });
   const { activeTab, pendingDeduplication } = state;
-  const mainLayoutClass =
-    activeTab === 'proofread2'
-      ? 'min-h-0 overflow-hidden'
-      : activeTab === 'gallery'
-        ? 'px-0 py-0'
-        : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6';
+  function getMainLayoutClass(tab: Tab): string {
+    if (tab === 'proofread2') return 'min-h-0 overflow-hidden';
+    if (tab === 'gallery') return 'px-0 py-0';
+    return 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6';
+  }
+
+  const mainLayoutClass = getMainLayoutClass(activeTab);
 
   // Refs for scrolling
   const sectionUploadRef = useRef<HTMLDivElement>(null);
@@ -166,18 +312,7 @@ const AppContent: React.FC = () => {
   };
 
   // 一键处理
-  const handleQuickProcess = async (options: {
-    srtFile: File | null;
-    dialoguePreset: RoiPreset | null;
-    locationPreset: RoiPreset | null;
-    timeRange: { startTime: number; endTime: number };
-    captureType: 'dialogue' | 'location' | 'both';
-    autoDeduplicationDialogue: boolean;
-    autoDeduplicationLocation: boolean;
-    frameInterval?: number;
-    skipSubtitleDialogue?: boolean;
-    skipSubtitleLocation?: boolean;
-  }) => {
+  const handleQuickProcess = async (options: QuickProcessOptions) => {
     if (!videoProcessing.activeVideo) {
       notifier.addToast('请先上传视频，再使用一键处理功能', 'warning');
       return;
@@ -206,42 +341,11 @@ const AppContent: React.FC = () => {
 
       if (shouldClear) {
         frameManagement.setExtractedFrames([]);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await waitForUi();
       } else {
         return;
       }
     }
-
-    const buildParams = (
-      group: 'group1' | 'group2',
-      skipSubtitle: boolean,
-      autoDedup: boolean
-    ): ExtractionParams => {
-      if (useSrt) {
-        return {
-          ...videoProcessing.params,
-          mode: ExtractionMode.SRT,
-          srtFile: srtFile!,
-          startTime: timeRange.startTime,
-          endTime: timeRange.endTime,
-          selectedGroup: group,
-          skipSubtitleRegions: skipSubtitle,
-          autoDeduplication: autoDedup,
-        };
-      } else {
-        return {
-          ...videoProcessing.params,
-          mode: ExtractionMode.FRAME,
-          srtFile: undefined,
-          interval: frameInterval ?? 30,
-          startTime: timeRange.startTime,
-          endTime: timeRange.endTime,
-          selectedGroup: group,
-          skipSubtitleRegions: false,
-          autoDeduplication: autoDedup,
-        };
-      }
-    };
 
     if (captureType === 'both') {
       notifier.addToast(
@@ -264,16 +368,18 @@ const AppContent: React.FC = () => {
       }
 
       if (dialoguePreset) {
-        const newRoi: ROI = {
-          x: dialoguePreset.x_ratio * 100,
-          y: dialoguePreset.y_ratio * 100,
-          width: dialoguePreset.w_ratio * 100,
-          height: dialoguePreset.h_ratio * 100,
-        };
-        videoProcessing.setRoi(newRoi);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        videoProcessing.setRoi(presetToRoi(dialoguePreset));
+        await waitForUi();
         videoProcessing.handleParamsSet(
-          buildParams('group1', useSrt && (skipSubtitleDialogue ?? false), false),
+          buildExtractionParams({
+            baseParams: videoProcessing.params,
+            srtFile,
+            timeRange,
+            frameInterval,
+            group: 'group1',
+            skipSubtitle: skipSubtitleDialogue ?? false,
+            autoDeduplication: false,
+          }),
           false
         );
         notifier.addToast('正在处理对话截图...', 'info');
@@ -284,27 +390,27 @@ const AppContent: React.FC = () => {
       const preset = captureType === 'dialogue' ? dialoguePreset : locationPreset;
       if (!preset) return;
 
-      const newRoi: ROI = {
-        x: preset.x_ratio * 100,
-        y: preset.y_ratio * 100,
-        width: preset.w_ratio * 100,
-        height: preset.h_ratio * 100,
-      };
-      videoProcessing.setRoi(newRoi);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
+      const category = captureType === 'dialogue' ? 'dialogue' : 'location';
+      const group = captureType === 'dialogue' ? 'group1' : 'group2';
       const autoDedup =
-        captureType === 'dialogue' ? autoDeduplicationDialogue : autoDeduplicationLocation;
-      const skipSub =
-        captureType === 'dialogue'
-          ? useSrt && (skipSubtitleDialogue ?? false)
-          : useSrt && (skipSubtitleLocation ?? true);
+        category === 'dialogue' ? autoDeduplicationDialogue : autoDeduplicationLocation;
+
+      videoProcessing.setRoi(presetToRoi(preset));
+      await waitForUi();
       videoProcessing.handleParamsSet(
-        buildParams(captureType === 'dialogue' ? 'group1' : 'group2', skipSub, autoDedup),
+        buildExtractionParams({
+          baseParams: videoProcessing.params,
+          srtFile,
+          timeRange,
+          frameInterval,
+          group,
+          skipSubtitle: getSkipSubtitleRegions(category, srtFile, options),
+          autoDeduplication: autoDedup,
+        }),
         false
       );
       notifier.addToast(
-        `已一键处理${captureType === 'dialogue' ? '对话' : '地点'}截图${useSrt ? '' : '（固定帧间隔）'}`,
+        `已一键处理${category === 'dialogue' ? '对话' : '地点'}截图${useSrt ? '' : '（固定帧间隔）'}`,
         'success'
       );
     }
@@ -324,41 +430,21 @@ const AppContent: React.FC = () => {
     const currentNextStepInfo = videoProcessing.nextStepInfoRef.current;
     if (currentNextStepInfo && currentNextStepInfo.preset) {
       notifier.addToast('对话截取完成，开始截取地点...', 'info');
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await waitForUi(1000);
 
       const locationPreset = currentNextStepInfo.preset;
-      const newRoi: ROI = {
-        x: locationPreset.x_ratio * 100,
-        y: locationPreset.y_ratio * 100,
-        width: locationPreset.w_ratio * 100,
-        height: locationPreset.h_ratio * 100,
-      };
-      videoProcessing.setRoi(newRoi);
+      videoProcessing.setRoi(presetToRoi(locationPreset));
+      await waitForUi();
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      const locationParams: ExtractionParams = currentNextStepInfo.srtFile
-        ? {
-            ...videoProcessing.params,
-            mode: ExtractionMode.SRT,
-            srtFile: currentNextStepInfo.srtFile,
-            startTime: currentNextStepInfo.timeRange.startTime,
-            endTime: currentNextStepInfo.timeRange.endTime,
-            selectedGroup: 'group2',
-            skipSubtitleRegions: currentNextStepInfo.skipSubtitleLocation ?? true,
-            autoDeduplication: false,
-          }
-        : {
-            ...videoProcessing.params,
-            mode: ExtractionMode.FRAME,
-            srtFile: undefined,
-            interval: currentNextStepInfo.frameInterval ?? 30,
-            startTime: currentNextStepInfo.timeRange.startTime,
-            endTime: currentNextStepInfo.timeRange.endTime,
-            selectedGroup: 'group2',
-            skipSubtitleRegions: false,
-            autoDeduplication: false,
-          };
+      const locationParams = buildExtractionParams({
+        baseParams: videoProcessing.params,
+        srtFile: currentNextStepInfo.srtFile,
+        timeRange: currentNextStepInfo.timeRange,
+        frameInterval: currentNextStepInfo.frameInterval,
+        group: 'group2',
+        skipSubtitle: currentNextStepInfo.skipSubtitleLocation ?? true,
+        autoDeduplication: false,
+      });
 
       const savedDeduplicationConfig = {
         dialogue: currentNextStepInfo.autoDeduplicationDialogue || false,
@@ -379,7 +465,7 @@ const AppContent: React.FC = () => {
     if (pendingDedup) {
       dispatch({ type: 'SET_PENDING_DEDUPLICATION', payload: null });
 
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      await waitForUi(800);
 
       if (pendingDedup.dialogue) {
         await deduplication.performDeduplication('group1', '【对话】');
@@ -396,7 +482,7 @@ const AppContent: React.FC = () => {
       const targetGroup = videoProcessing.params.selectedGroup;
       const groupLabel = targetGroup === 'group1' ? '【对话】' : '【地点】';
 
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      await waitForUi(800);
       await deduplication.performDeduplication(targetGroup, groupLabel);
     }
 
@@ -410,13 +496,10 @@ const AppContent: React.FC = () => {
       const parts = timestamp.split(':');
       if (parts.length !== 3) return;
 
-      const hours = parseInt(parts[0]);
-      const minutes = parseInt(parts[1]);
-      const secondsParts = parts[2].split('.');
-      const seconds = parseInt(secondsParts[0]);
-      const milliseconds = secondsParts[1] ? parseInt(secondsParts[1]) : 0;
-
-      const totalSeconds = hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
+      const [h, m, secStr] = parts;
+      const [s, ms = '0'] = secStr.split('.');
+      const totalSeconds =
+        parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s) + parseInt(ms) / 1000;
 
       dispatch({ type: 'SET_ACTIVE_TAB', payload: 'extract' });
 
@@ -433,7 +516,7 @@ const AppContent: React.FC = () => {
   );
 
   // 一键拼接状态
-  const [oneClickProgress, setOneClickProgress] = React.useState<{
+  const [oneClickProgress, setOneClickProgress] = useState<{
     isLoading: boolean;
     progress: number;
     message: string;
@@ -520,63 +603,6 @@ const AppContent: React.FC = () => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
 
-      const getVideoMetadata = async (sourceFile: File): Promise<VideoFile> => {
-        const localPath = await resolveVideoLocalPath(sourceFile);
-
-        return new Promise((resolve, reject) => {
-          const url = URL.createObjectURL(sourceFile);
-          const video = document.createElement('video');
-          video.preload = 'auto';
-          video.muted = true;
-          const onLoadedData = () => {
-            if (!isFinite(video.duration) || video.duration === 0) return;
-            cleanup();
-            resolve({
-              id: Math.random().toString(36).substr(2, 9),
-              file: sourceFile,
-              localPath,
-              name: sourceFile.name,
-              size: sourceFile.size,
-              duration: video.duration,
-              width: video.videoWidth,
-              height: video.videoHeight,
-              previewUrl: url,
-            });
-          };
-          const onDurationChange = () => {
-            if (isFinite(video.duration) && video.duration > 0) {
-              cleanup();
-              resolve({
-                id: Math.random().toString(36).substr(2, 9),
-                file: sourceFile,
-                localPath,
-                name: sourceFile.name,
-                size: sourceFile.size,
-                duration: video.duration,
-                width: video.videoWidth,
-                height: video.videoHeight,
-                previewUrl: url,
-              });
-            }
-          };
-          const onError = () => {
-            cleanup();
-            reject(new Error(`Failed to load video metadata for ${sourceFile.name}`));
-            URL.revokeObjectURL(url);
-          };
-          const cleanup = () => {
-            video.removeEventListener('loadeddata', onLoadedData);
-            video.removeEventListener('durationchange', onDurationChange);
-            video.removeEventListener('error', onError);
-          };
-          video.addEventListener('loadeddata', onLoadedData);
-          video.addEventListener('durationchange', onDurationChange);
-          video.addEventListener('error', onError);
-          video.src = url;
-          video.load();
-        });
-      };
-
       try {
         const videoData = await getVideoMetadata(file);
         handleVideoUploaded(videoData);
@@ -637,55 +663,67 @@ const AppContent: React.FC = () => {
           )}
 
           {activeTab === 'gallery' && (
-            <GalleryTab
-              extractedFrames={frameManagement.extractedFrames}
-              mergedImages={frameManagement.mergedImages}
-              onMergeImages={frameManagement.handleMergeImages}
-              onOneClickRecognize={handleOneClickRecognize}
-              onDeleteFrames={frameManagement.handleDeleteFrames}
-              onDeleteMerged={(ids) => {
-                const idSet = new Set(ids);
-                frameManagement.setMergedImages((prev) =>
-                  prev.filter((img) => !idSet.has(img.id))
-                );
-              }}
-              onClearMerged={() => frameManagement.setMergedImages([])}
-              onClearAllData={handleClearAllData}
-              onImportFrames={frameManagement.handleImportFrames}
-              onImportMerged={frameManagement.handleImportMerged}
-              onMergeGroups={frameManagement.handleMergeGroups}
-              onJumpToTime={handleJumpToTime}
-            />
+            <Suspense fallback={tabLoadingFallback}>
+              <GalleryTab
+                extractedFrames={frameManagement.extractedFrames}
+                mergedImages={frameManagement.mergedImages}
+                onMergeImages={frameManagement.handleMergeImages}
+                onOneClickRecognize={handleOneClickRecognize}
+                onDeleteFrames={frameManagement.handleDeleteFrames}
+                onDeleteMerged={(ids) => {
+                  const idSet = new Set(ids);
+                  frameManagement.setMergedImages((prev) =>
+                    prev.filter((img) => !idSet.has(img.id))
+                  );
+                }}
+                onClearMerged={() => frameManagement.setMergedImages([])}
+                onClearAllData={handleClearAllData}
+                onImportFrames={frameManagement.handleImportFrames}
+                onImportMerged={frameManagement.handleImportMerged}
+                onMergeGroups={frameManagement.handleMergeGroups}
+                onJumpToTime={handleJumpToTime}
+              />
+            </Suspense>
           )}
 
-          {activeTab === 'proofread' && <ProofreadTab />}
+          {activeTab === 'proofread' && (
+            <Suspense fallback={tabLoadingFallback}>
+              <ProofreadTab />
+            </Suspense>
+          )}
 
           {activeTab === 'proofread2' && (
-            <ProofreadEditorTab
-              extractedFrames={frameManagement.extractedFrames}
-              activeVideo={videoProcessing.activeVideo}
-              videoSrc={videoProcessing.videoSrc}
-              videoElementRef={videoElementRef}
-              roi={videoProcessing.roi}
-              onDeleteFrames={frameManagement.handleDeleteFrames}
-              onJumpToTime={handleJumpToTime}
-              onCaptureFrame={frameManagement.handleFrameCaptured}
-            />
+            <Suspense fallback={tabLoadingFallback}>
+              <ProofreadEditorTab
+                extractedFrames={frameManagement.extractedFrames}
+                activeVideo={videoProcessing.activeVideo}
+                videoSrc={videoProcessing.videoSrc}
+                videoElementRef={videoElementRef}
+                roi={videoProcessing.roi}
+                onDeleteFrames={frameManagement.handleDeleteFrames}
+                onJumpToTime={handleJumpToTime}
+                onCaptureFrame={frameManagement.handleFrameCaptured}
+              />
+            </Suspense>
           )}
 
           {activeTab === 'baimiao' && (
-            <BaimiaoTab
-              mergedImages={frameManagement.mergedImages}
-              onOneClickRecognize={handleOneClickRecognize}
-            />
+            <Suspense fallback={tabLoadingFallback}>
+              <BaimiaoTab
+                mergedImages={frameManagement.mergedImages}
+                onOneClickRecognize={handleOneClickRecognize}
+              />
+            </Suspense>
           )}
 
           {activeTab === 'aichat' && (
-            <AiChatTab
-              mergedImages={frameManagement.mergedImages}
-              onOneClickRecognize={handleOneClickRecognize}
-              oneClickProgress={oneClickProgress}
-            />
+            <Suspense fallback={tabLoadingFallback}>
+              <AiChatTab
+                mergedImages={frameManagement.mergedImages}
+                onOneClickRecognize={handleOneClickRecognize}
+                oneClickProgress={oneClickProgress}
+              />
+            </Suspense>
           )}
         </main>
       </div>

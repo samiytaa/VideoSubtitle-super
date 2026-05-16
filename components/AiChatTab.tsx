@@ -63,13 +63,33 @@ const BUILTIN_DEFAULT_SYSTEM_PROMPT = `将以上剧本转为简体中文，
 要求只返回符合要求的剧本
 ！！！禁止在回复的开头和结尾增加不是剧本的内容！！！`;
 
-const normalizeEndpoint = (endpoint: string) => {
+function normalizeEndpoint(endpoint: string): string {
   if (!endpoint) return 'https://api.openai.com/v1/chat/completions';
   const withProtocol = /^https?:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`;
   return withProtocol.endsWith('/chat/completions')
     ? withProtocol
     : `${withProtocol.replace(/\/$/, '')}/chat/completions`;
-};
+}
+
+/**
+ * 把外部 AI API 请求改写为走本地代理 /api/ai-proxy，
+ * 避免浏览器 CORS 限制。
+ * 返回 { url, headers } 供 fetch 使用。
+ */
+function buildProxiedRequest(
+  targetUrl: string,
+  apiKey: string,
+  extraHeaders?: Record<string, string>
+): { url: string; headers: Record<string, string> } {
+  return {
+    url: '/api/ai-proxy',
+    headers: {
+      'x-ai-target-url': targetUrl,
+      'x-ai-api-key': apiKey,
+      ...extraHeaders,
+    },
+  };
+}
 
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 120000) => {
   const controller = new AbortController();
@@ -122,9 +142,7 @@ const request = async (url: string, options: RequestInit & { timeout?: number } 
   const response = await fetchWithTimeout(url, rest, timeout);
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(
-      `API请求失败: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 200)}` : ''}`,
-    );
+    throw new Error(formatRequestError(response.status, response.statusText, text));
   }
   return response;
 };
@@ -238,6 +256,27 @@ type ChatTask = {
 
 const MAX_CONCURRENT_TASKS = 3;
 const DEBUG_TAG = '[AiChatTab]';
+const autoFetchedModelConfigKeys = new Set<string>();
+
+function formatRequestError(status: number, statusText: string, rawText: string): string {
+  const text = rawText.trim();
+
+  if (status === 502) {
+    const proxyMessageMatch = text.match(/"error"\s*:\s*"([^"]+)"/);
+    const proxyMessage = proxyMessageMatch?.[1];
+    return proxyMessage
+      ? `AI代理不可用：${proxyMessage}`
+      : 'AI代理不可用：无法连接到上游模型服务';
+  }
+
+  if (!text) {
+    return `API请求失败: ${status} ${statusText}`;
+  }
+
+  const jsonErrorMatch = text.match(/"error"\s*:\s*"([^"]+)"/);
+  const message = jsonErrorMatch?.[1] || text.slice(0, 200);
+  return `API请求失败: ${status} ${statusText} - ${message}`;
+}
 
 const AiChatTab: React.FC<AiChatTabProps> = ({ 
   mergedImages = [], 
@@ -251,6 +290,7 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
   const [status, setStatus] = useState('');
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [isTestingModel, setIsTestingModel] = useState(false);
+  const [hasBaimiaoConfig, setHasBaimiaoConfig] = useState<boolean>(true);
 
   const [inputText, setInputText] = useState('');
   const [systemPrompt, setSystemPrompt] = useState(
@@ -287,8 +327,9 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
     setStatus('拉取中...');
     try {
       const base = normalizeEndpoint(apiUrl).replace(/\/chat\/completions$/, '');
-      const response = await request(`${base}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      const proxied = buildProxiedRequest(`${base}/models`, apiKey);
+      const response = await request(proxied.url, {
+        headers: proxied.headers,
         timeout: 10000,
       });
       const data = await response.json();
@@ -310,9 +351,12 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
   }, [apiKey, apiUrl, model]);
 
   useEffect(() => {
-    if (!apiUrl || !apiKey) return;
+    if (!apiUrl || !apiKey || model) return;
+    const configKey = `${apiUrl}::${apiKey}`;
+    if (autoFetchedModelConfigKeys.has(configKey)) return;
+    autoFetchedModelConfigKeys.add(configKey);
     void fetchModels();
-  }, [apiKey, apiUrl, fetchModels]);
+  }, [apiKey, apiUrl, fetchModels, model]);
 
   const testModel = async () => {
     if (!hasConfig) {
@@ -323,9 +367,10 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
     setStatus('测试中...');
     try {
       const endpoint = normalizeEndpoint(apiUrl);
-      const response = await request(endpoint, {
+      const proxied = buildProxiedRequest(endpoint, apiKey, { 'Content-Type': 'application/json' });
+      const response = await request(proxied.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        headers: proxied.headers,
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content: '请回复"OK"，不要有其他内容。' }],
@@ -396,11 +441,12 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
 
       try {
         const endpoint = normalizeEndpoint(apiUrl);
+        const proxied = buildProxiedRequest(endpoint, apiKey, { 'Content-Type': 'application/json' });
         await requestStream(
-          endpoint,
+          proxied.url,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+            headers: proxied.headers,
             body: JSON.stringify({ model, messages, stream: true }),
             timeout: 120000,
             signal: taskController.signal,
@@ -549,6 +595,7 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
   const [expandedRuns, setExpandedRuns] = useState<Record<number, boolean>>({});
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
   const [settingsPanelSection, setSettingsPanelSection] = useState<'api' | 'baimiao'>('api');
+  const hasApiConfig = !!apiUrl && !!apiKey && !!model;
   const mergedOcrAbortControllerRef = useRef<AbortController | null>(null);
 
   const requestJson = useCallback(async (url: string, options: RequestInit & { timeout?: number } = {}) => {
@@ -560,6 +607,24 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
     }
     return payload as any;
   }, []);
+
+  const checkBaimiaoConfig = useCallback(async () => {
+    try {
+      const payload = await requestJson('/api/baimiao/config');
+      const summary = (payload.baimiao ?? {}) as BaimiaoSummary;
+      const accounts = summary.accounts ?? [];
+      const configured = accounts.length > 0;
+      setHasBaimiaoConfig(configured);
+      return configured;
+    } catch {
+      setHasBaimiaoConfig(false);
+      return false;
+    }
+  }, [requestJson]);
+
+  useEffect(() => {
+    void checkBaimiaoConfig();
+  }, [checkBaimiaoConfig]);
 
   const postJson = useCallback(async (
     url: string,
@@ -586,10 +651,8 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
       return;
     }
     try {
-      const payload = await requestJson('/api/baimiao/config');
-      const summary = (payload.baimiao ?? {}) as BaimiaoSummary;
-      const accounts = summary.accounts ?? [];
-      if (accounts.length === 0) {
+      const configured = await checkBaimiaoConfig();
+      if (!configured) {
         const message = '请先配置白描账号，未配置账号时不能使用一键 OCR';
         setMergedOcrStatus(message);
         setMergedOcrProgress({ progress: 0, message: '', error: message });
@@ -976,7 +1039,11 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
                 onClick={() => { setSettingsPanelSection('baimiao'); setIsSettingsPanelOpen(true); }}
                 title="白描设置"
                 aria-label="白描设置"
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 shadow-sm transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600"
+                className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-white shadow-sm transition-colors ${
+                  hasBaimiaoConfig
+                    ? 'border-gray-200 text-gray-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600'
+                    : 'border-red-200 bg-red-50 text-red-500 hover:border-red-300 hover:bg-red-100 hover:text-red-600'
+                }`}
               >
                 <Settings className="h-3.5 w-3.5" />
               </button>
@@ -1109,7 +1176,11 @@ const AiChatTab: React.FC<AiChatTabProps> = ({
                   onClick={() => { setSettingsPanelSection('api'); setIsSettingsPanelOpen(true); }}
                   title="配置 API"
                   aria-label="配置 API"
-                  className="inline-flex h-7 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 text-xs font-medium text-indigo-600 transition-colors hover:border-indigo-300 hover:bg-indigo-100"
+                  className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors ${
+                    hasApiConfig
+                      ? 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:border-indigo-300 hover:bg-indigo-100'
+                      : 'border-red-200 bg-red-50 text-red-600 hover:border-red-300 hover:bg-red-100'
+                  }`}
                 >
                   <svg
                     className="h-3 w-3"
