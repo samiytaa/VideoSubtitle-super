@@ -65,14 +65,33 @@ export const useBulkAvatarActions = (params: UseBulkAvatarActionsParams) => {
     setSelectedBlockIndices(newSelected);
   };
 
-  const toggleSelectAllDialogues = (setSelectedBlockIndices: (value: Set<number>) => void) => {
+  const toggleSelectAllDialogues = (
+    setSelectedBlockIndices: (value: Set<number>) => void,
+    setSelectedNestedKeys: (value: Set<string>) => void
+  ) => {
     const currentChapter = params.chapters[params.currentChapterIndex];
     const dialogueIndices = currentChapter.blocks
       .map((block, index) => ({ block, index }))
       .filter(({ block }) => block.type === 'dialogue')
       .map(({ index }) => index);
-    const allSelected = dialogueIndices.every(index => params.selectedBlockIndices.has(index));
+    const nestedDialogueKeys = currentChapter.blocks.flatMap((block, blockIndex) => {
+      if (block.type !== 'nested-choice-group') {
+        return [];
+      }
+
+      return (block.nestedOptions || []).flatMap((option) =>
+        option.blocks.flatMap((nestedBlock, nestedBlockIndex) =>
+          nestedBlock.type === 'dialogue' ? [`${blockIndex}-${option.showIndex}-${nestedBlockIndex}`] : []
+        )
+      );
+    });
+
+    const allTopLevelSelected = dialogueIndices.every(index => params.selectedBlockIndices.has(index));
+    const allNestedSelected = nestedDialogueKeys.every(key => params.selectedNestedKeys.has(key));
+    const allSelected = dialogueIndices.length + nestedDialogueKeys.length > 0 && allTopLevelSelected && allNestedSelected;
+
     setSelectedBlockIndices(allSelected ? new Set<number>() : new Set(dialogueIndices));
+    setSelectedNestedKeys(allSelected ? new Set<string>() : new Set(nestedDialogueKeys));
   };
 
   const batchSetAvatar = (avatarName: string) => {
@@ -134,5 +153,48 @@ export const useBulkAvatarActions = (params: UseBulkAvatarActionsParams) => {
     return { affectedCount };
   };
 
-  return { toggleBlockSelection, toggleSelectAllDialogues, batchSetAvatar, batchClearAvatar };
+  const batchDeleteDialogues = () => {
+    const affectedCount = getAffectedDialogueCount();
+    if (affectedCount === 0) {
+      return { affectedCount: 0 };
+    }
+
+    const currentChapter = params.chapters[params.currentChapterIndex];
+    if (!currentChapter) {
+      return { affectedCount: 0 };
+    }
+
+    const nextBlocks = currentChapter.blocks.flatMap((block, blockIndex) => {
+      if (params.selectedBlockIndices.has(blockIndex) && block.type === 'dialogue') {
+        return [];
+      }
+
+      if (block.type !== 'nested-choice-group') {
+        return [block];
+      }
+
+      const nextNestedOptions = (block.nestedOptions || []).map((option) => ({
+        ...option,
+        blocks: option.blocks.filter((nestedBlock, nestedBlockIndex) => {
+          const nestedKey = `${blockIndex}-${option.showIndex}-${nestedBlockIndex}`;
+          return !(nestedBlock.type === 'dialogue' && params.selectedNestedKeys.has(nestedKey));
+        })
+      }));
+
+      return [{ ...block, nestedOptions: nextNestedOptions }];
+    });
+
+    const nextChapter = { ...currentChapter, blocks: nextBlocks };
+    const updatedChapters = params.chapters.map((chapter, chapterIndex) =>
+      chapterIndex === params.currentChapterIndex ? nextChapter : chapter
+    );
+
+    params.commitChapters(updatedChapters);
+    params.clearSelections();
+    params.exitMultiSelect();
+
+    return { affectedCount };
+  };
+
+  return { toggleBlockSelection, toggleSelectAllDialogues, batchSetAvatar, batchClearAvatar, batchDeleteDialogues };
 };

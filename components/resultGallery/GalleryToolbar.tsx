@@ -33,10 +33,12 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
   onImportClick,
   onFileImport,
   onDownloadZip,
-  onClearAllData,
+  onClearCurrent,
   onMergeGroupsClick,
+  onSelectAll,
 }) => {
   const selectedFramesCount = filteredFrames.filter((f) => selectedIds.has(f.id)).length;
+  const currentCount = viewType === 'frames' ? filteredFrames.length : mergedImages.length;
 
   return (
     <>
@@ -57,7 +59,7 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
           )}
         </div>
 
-        {/* 中间：导入和下载 */}
+        {/* 中间：导入、下载和清空 */}
         <div className="flex items-center gap-1.5 flex-1 justify-center min-w-[180px]">
           <button
             onClick={onImportClick}
@@ -77,6 +79,14 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
           >
             <Download className="w-3.5 h-3.5" /> {isDownloading ? '下载中' : 'ZIP'}
           </button>
+          <button
+            onClick={onClearCurrent}
+            disabled={currentCount === 0}
+            className="flex items-center gap-1 px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="清空当前列表"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> 清空
+          </button>
           <input
             ref={fileInputRef}
             type="file"
@@ -87,7 +97,7 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
           />
         </div>
 
-        {/* 右侧：视图切换和清空所有数据按钮 */}
+        {/* 右侧：视图切换 */}
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
           <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
             <button
@@ -117,15 +127,6 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
               </span>
             </button>
           </div>
-
-          {(frames.length > 0 || mergedImages.length > 0) && (
-            <button
-              onClick={onClearAllData}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-white bg-red-700 border border-red-800 rounded-lg hover:bg-red-800 transition-colors shadow-sm"
-            >
-              <Trash2 className="w-3.5 h-3.5" /> 清空所有数据
-            </button>
-          )}
         </div>
       </div>
 
@@ -134,9 +135,7 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
           <div className="flex min-w-max items-center gap-3 py-0">
             {viewType === 'frames' && (
               <>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 whitespace-nowrap">分组筛选：</span>
-                  <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1">
                     {[
                       { key: 'all', label: '全部', count: frames.length },
                       { key: 'group1', label: '【对话】', count: frames.filter((f) => f.group === 'group1').length },
@@ -154,7 +153,6 @@ const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
                         {label} ({count})
                       </button>
                     ))}
-                  </div>
                 </div>
 
                 <button

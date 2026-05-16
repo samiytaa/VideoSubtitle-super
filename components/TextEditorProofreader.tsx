@@ -288,9 +288,75 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     return { success: true as const, text: nextConvertedText };
   }, [detectConversionMode, originalInputText, setInputText]);
 
+  const removeBlankLines = useCallback((text: string) => (
+    text
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .join('\n')
+  ), []);
+
+  const normalizeConvertedText = useCallback((text: string) => {
+    let normalizedText = removeBlankLines(text);
+    if (normalizedText.includes('{{嵌套分歧|')) {
+      const jsTag = '{{JS|Qiantao.js}}';
+      normalizedText = normalizedText.replace(jsTag, '');
+      normalizedText = jsTag + normalizedText;
+    }
+    return normalizedText;
+  }, [removeBlankLines]);
+
+  const reverseConvertedTextSafely = useCallback((normalizedText: string) => {
+    const reverseMode = normalizedText.includes('{{密探故事录入|') ? 'mitan' : 'mainline';
+    return reverseConvertText(normalizedText, reverseMode);
+  }, []);
+
+  const syncAllFromConvertedText = useCallback((
+    nextConvertedText: string,
+    options?: {
+      nextChapters?: Chapter[];
+      originalOverride?: string;
+    }
+  ) => {
+    const normalizedText = normalizeConvertedText(nextConvertedText);
+    setInputText(normalizedText);
+
+    if (!normalizedText.trim()) {
+      setOriginalInputText(options?.originalOverride ?? '');
+      setChapters([]);
+      setCharacterName('');
+      return normalizedText;
+    }
+
+    let parsedChapters: Chapter[] = [];
+    try {
+      parsedChapters = options?.nextChapters ?? parseText(normalizedText);
+    } catch {
+      parsedChapters = [];
+    }
+    setChapters(parsedChapters);
+    setCharacterName((prev) => {
+      if (!parsedChapters.length) return '';
+      return parsedChapters.some((chapter) => chapter.character === prev)
+        ? prev
+        : parsedChapters[0].character;
+    });
+
+    if (options?.originalOverride !== undefined) {
+      setOriginalInputText(options.originalOverride);
+      return normalizedText;
+    }
+
+    const reversed = reverseConvertedTextSafely(normalizedText);
+    if (reversed.success) {
+      setOriginalInputText(reversed.output);
+    }
+    return normalizedText;
+  }, [normalizeConvertedText, reverseConvertedTextSafely, setChapters, setInputText, setOriginalInputText]);
+
   const commitChapters = (nextChapters: Chapter[]) => {
-    setChapters(nextChapters);
-    setInputText(regenerateInputText(nextChapters));
+    const nextConvertedText = regenerateInputText(nextChapters);
+    syncAllFromConvertedText(nextConvertedText, { nextChapters });
   };
 
   const updateChapters = useCallback((updater: (draft: Chapter[]) => void) => {
@@ -314,15 +380,14 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value;
-    setInputText(text);
+    syncAllFromConvertedText(text);
   };
 
   const handleOriginalTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const text = e.target.value;
-    setOriginalInputText(text);
+    const text = removeBlankLines(e.target.value);
 
     if (!text.trim()) {
-      setInputText('');
+      syncAllFromConvertedText('', { originalOverride: '' });
       return;
     }
 
@@ -331,16 +396,11 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
       : convertTextMainline(text);
 
     if (!conversion.success) {
+      setOriginalInputText(text);
       return;
     }
 
-    let nextConvertedText = conversion.output;
-    if (nextConvertedText.includes('{{嵌套分歧|')) {
-      const jsTag = '{{JS|Qiantao.js}}';
-      nextConvertedText = nextConvertedText.replace(jsTag, '');
-      nextConvertedText = jsTag + nextConvertedText;
-    }
-    setInputText(nextConvertedText);
+    syncAllFromConvertedText(conversion.output, { originalOverride: text });
   };
 
   const handleStartProofreading = () => {
@@ -642,7 +702,7 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
   });
 
   const toggleBlockSelection = (blockIndex: number) => bulkActions.toggleBlockSelection(blockIndex, setSelectedBlockIndices);
-  const toggleSelectAllDialogues = () => bulkActions.toggleSelectAllDialogues(setSelectedBlockIndices);
+  const toggleSelectAllDialogues = () => bulkActions.toggleSelectAllDialogues(setSelectedBlockIndices, setSelectedNestedKeys);
 
   const selectedCount = selectedBlockIndices.size + selectedNestedKeys.size;
   const currentPreviewChapter = chapters[currentChapterIndex];
@@ -652,7 +712,23 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
       .filter(({ block }) => block.type === 'dialogue')
       .map(({ index }) => index)
     : [];
-  const allDialoguesSelected = dialogueIndices.length > 0 && dialogueIndices.every(index => selectedBlockIndices.has(index));
+  const nestedDialogueKeys = currentPreviewChapter
+    ? currentPreviewChapter.blocks.flatMap((block, blockIndex) => {
+      if (block.type !== 'nested-choice-group') {
+        return [];
+      }
+
+      return (block.nestedOptions || []).flatMap((option) =>
+        option.blocks.flatMap((nestedBlock, nestedBlockIndex) =>
+          nestedBlock.type === 'dialogue' ? [`${blockIndex}-${option.showIndex}-${nestedBlockIndex}`] : []
+        )
+      );
+    })
+    : [];
+  const allDialoguesSelected =
+    dialogueIndices.length + nestedDialogueKeys.length > 0 &&
+    dialogueIndices.every(index => selectedBlockIndices.has(index)) &&
+    nestedDialogueKeys.every(key => selectedNestedKeys.has(key));
 
   const handleOpenQuickReplaceDialog = () => {
     const characters = getCurrentChapterCharacters();
@@ -689,8 +765,27 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
     }
   };
 
+  const handleBatchDeleteConfirm = async () => {
+    if (selectedCount === 0) {
+      addToast('请先选择要删除的对话', 'error');
+      return;
+    }
+
+    const confirmed = await showConfirm({
+      title: '确认删除',
+      message: `确定要删除选中的 ${selectedCount} 条对话吗？此操作不可撤销。`
+    });
+    if (confirmed) {
+      const result = batchDeleteDialogues();
+      if (result?.affectedCount) {
+        addToast(`已删除 ${result.affectedCount} 条对话`, 'success');
+      }
+    }
+  };
+
   const batchSetAvatar = bulkActions.batchSetAvatar;
   const batchClearAvatar = bulkActions.batchClearAvatar;
+  const batchDeleteDialogues = bulkActions.batchDeleteDialogues;
 
   const handleBatchSelectAvatar = (avatarName: string) => {
     const result = batchSetAvatar(avatarName);
@@ -1045,6 +1140,7 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
             onToggleSelectAllDialogues={toggleSelectAllDialogues}
             onOpenBatchAvatarPicker={handleOpenBatchAvatarPicker}
             onBatchClearAvatarConfirm={handleBatchClearAvatarConfirm}
+            onBatchDeleteConfirm={handleBatchDeleteConfirm}
           />
 
           <div ref={rightScrollRef} className="flex-1 min-h-0 overflow-y-auto">

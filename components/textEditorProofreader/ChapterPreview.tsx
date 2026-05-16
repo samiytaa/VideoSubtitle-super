@@ -2,6 +2,8 @@ import React from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Chapter } from './types';
 
+const BLOCK_SPACING_PX = 10;
+
 interface ChapterPreviewProps {
   chapter: Chapter;
   chapterIndex: number;
@@ -41,9 +43,12 @@ const ChapterPreview: React.FC<ChapterPreviewProps> = ({
         {shouldFallbackRender ? (
           <div className="space-y-0">
             {chapter.blocks.map((_, index) => (
-              <React.Fragment key={`${chapterKey}-${index}`}>
+              <div
+                key={`${chapterKey}-${index}`}
+                style={{ paddingBottom: index === chapter.blocks.length - 1 ? 0 : `${BLOCK_SPACING_PX}px` }}
+              >
                 {renderBlock(index)}
-              </React.Fragment>
+              </div>
             ))}
           </div>
         ) : (
@@ -58,6 +63,7 @@ const ChapterPreview: React.FC<ChapterPreviewProps> = ({
                   top: 0,
                   left: 0,
                   width: '100%',
+                  paddingBottom: virtualItem.index === chapter.blocks.length - 1 ? 0 : `${BLOCK_SPACING_PX}px`,
                   transform: `translateY(${virtualItem.start}px)`,
                   zIndex:
                     activeInsertMenuIndex === virtualItem.index ||

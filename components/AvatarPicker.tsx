@@ -4,6 +4,7 @@ import { X, Search, Star, Clock, Grid2x2, ZoomIn, ZoomOut, RotateCcw, Image as I
 import CompactGallery from './CompactGallery';
 import { ExtractedFrame, VideoFile, ROI } from '../types';
 import { handleError } from '../utils/errorHandler';
+import { generateAvatarReferenceImages } from '../utils/avatarReferenceCrop';
 
 interface AvatarPickerProps {
   onSelect: (avatarName: string) => void;
@@ -59,6 +60,13 @@ interface RecentAvatar {
   timestamp: number;
 }
 
+interface AvatarReferencePreview {
+  frameId: string;
+  frameUrl: string;
+  left: string;
+  right: string;
+}
+
 
 const AvatarPicker: React.FC<AvatarPickerProps> = ({ 
   onSelect, 
@@ -83,6 +91,10 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   // 右侧预览栏当前悬停/点击的头像
   const [hoveredAvatar, setHoveredAvatar] = useState<string | null>(currentAvatar ?? null);
   const avatarItemRefs = useRef(new Map<string, HTMLDivElement>());
+  const [selectedReferenceFrameId, setSelectedReferenceFrameId] = useState<string | null>(null);
+  const [avatarReferencePreview, setAvatarReferencePreview] = useState<AvatarReferencePreview | null>(null);
+  const [isGeneratingReferencePreview, setIsGeneratingReferencePreview] = useState(false);
+  const [referencePreviewError, setReferencePreviewError] = useState<string | null>(null);
   
   // 校对图片折叠状态（现在在中间区域下方）
   const [isProofreadCollapsed, setIsProofreadCollapsed] = useState(() => {
@@ -149,6 +161,14 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   useEffect(() => {
     localStorage.setItem('avatarPicker_previewCollapsed', String(isPreviewCollapsed));
   }, [isPreviewCollapsed]);
+
+  useEffect(() => {
+    if (!selectedReferenceFrameId) return;
+    if (extractedFrames.some((frame) => frame.id === selectedReferenceFrameId)) return;
+    setSelectedReferenceFrameId(null);
+    setAvatarReferencePreview(null);
+    setReferencePreviewError(null);
+  }, [extractedFrames, selectedReferenceFrameId]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.LAST_CATEGORY, selectedCategory);
@@ -345,6 +365,55 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   const previewPath = hoveredAvatar ? getAvatarPath(hoveredAvatar) : null;
   const isPreviewFavorite = hoveredAvatar ? favoriteAvatars.has(hoveredAvatar) : false;
   const isPreviewSelected = hoveredAvatar === currentAvatar;
+  const selectedReferenceFrame = useMemo(
+    () => extractedFrames.find((frame) => frame.id === selectedReferenceFrameId) ?? null,
+    [extractedFrames, selectedReferenceFrameId]
+  );
+
+  const handleSelectReferenceFrame = useCallback((frame: ExtractedFrame) => {
+    setSelectedReferenceFrameId(frame.id);
+    setReferencePreviewError(null);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!selectedReferenceFrame) {
+      setAvatarReferencePreview(null);
+      setReferencePreviewError(null);
+      setIsGeneratingReferencePreview(false);
+      return;
+    }
+
+    setIsGeneratingReferencePreview(true);
+    setReferencePreviewError(null);
+
+    generateAvatarReferenceImages(selectedReferenceFrame.url)
+      .then((preview) => {
+        if (cancelled) return;
+        setAvatarReferencePreview({
+          frameId: selectedReferenceFrame.id,
+          frameUrl: selectedReferenceFrame.url,
+          left: preview.left,
+          right: preview.right,
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAvatarReferencePreview(null);
+        setReferencePreviewError(error instanceof Error ? error.message : '头像参考图生成失败');
+        handleError(error, undefined, { context: 'Failed to generate avatar reference preview' });
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsGeneratingReferencePreview(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedReferenceFrame]);
 
   // 校对图片拖拽（现在是垂直拖拽）
   const isResizingProofread = useRef(false);
@@ -781,6 +850,8 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                       sharedVideoRef={sharedVideoRef}
                       roi={roi}
                       onCaptureFrame={onCaptureFrame}
+                      selectedReferenceFrameId={selectedReferenceFrameId}
+                      onSelectReferenceFrame={handleSelectReferenceFrame}
                     />
                   </div>
                 </div>
@@ -827,7 +898,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                 </div>
 
                 {hoveredAvatar && previewPath ? (
-                  <div className="flex flex-col items-center gap-4 p-4 flex-1 overflow-hidden">
+                  <div className="flex flex-col gap-4 p-4 flex-1 overflow-y-auto">
                     <div
                       ref={imgContainerRef}
                       onWheel={handleWheel}
@@ -881,6 +952,72 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                     <p className="text-sm font-medium text-gray-800 text-center leading-snug break-all">
                       {hoveredAvatar}
                     </p>
+
+                    <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">头像参考</span>
+                        {selectedReferenceFrame && (
+                          <span className="text-[11px] text-emerald-600 truncate max-w-[120px]" title={selectedReferenceFrame.filename}>
+                            {selectedReferenceFrame.filename}
+                          </span>
+                        )}
+                      </div>
+
+                      {!selectedReferenceFrame && (
+                        <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-400">
+                          在下方校对图片里点“设为参考”，会自动裁出左右头像区域
+                        </div>
+                      )}
+
+                      {selectedReferenceFrame && isGeneratingReferencePreview && (
+                        <div className="rounded-lg border border-dashed border-emerald-200 bg-emerald-50 px-3 py-4 text-center text-xs text-emerald-600">
+                          正在生成左右头像参考图…
+                        </div>
+                      )}
+
+                      {selectedReferenceFrame && referencePreviewError && (
+                        <div className="rounded-lg border border-dashed border-red-200 bg-red-50 px-3 py-4 text-center text-xs text-red-500">
+                          {referencePreviewError}
+                        </div>
+                      )}
+
+                      {selectedReferenceFrame && avatarReferencePreview && (
+                        <div className="space-y-3">
+                          <div>
+                            <div className="mb-1 text-[11px] font-medium text-gray-500">原图</div>
+                            <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                              <img
+                                src={avatarReferencePreview.frameUrl}
+                                alt="校对参考图"
+                                className="block h-24 w-full object-contain"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <div className="mb-1 text-[11px] font-medium text-gray-500">左侧头像</div>
+                              <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                                <img
+                                  src={avatarReferencePreview.left}
+                                  alt="左侧头像参考"
+                                  className="block aspect-[3/4] w-full object-cover"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <div className="mb-1 text-[11px] font-medium text-gray-500">右侧头像</div>
+                              <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                                <img
+                                  src={avatarReferencePreview.right}
+                                  alt="右侧头像参考"
+                                  className="block aspect-[3/4] w-full object-cover"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
                     <div className="flex gap-2 w-full">
                       <button

@@ -19,6 +19,7 @@ export const useFrameManagement = (notifier: Notifier) => {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const extractedFramesRef = useRef<ExtractedFrame[]>([]);
+  const objectUrlRegistryRef = useRef<Map<string, string>>(new Map());
   const saveFramesTokenRef = useRef(0);
   const saveMergedTokenRef = useRef(0);
 
@@ -26,6 +27,37 @@ export const useFrameManagement = (notifier: Notifier) => {
   useEffect(() => {
     extractedFramesRef.current = extractedFrames;
   }, [extractedFrames]);
+
+  useEffect(() => {
+    const registry = objectUrlRegistryRef.current;
+    const activeBlobUrls = new Set(
+      extractedFrames
+        .filter((frame) => frame.url.startsWith('blob:'))
+        .map((frame) => frame.url)
+    );
+
+    for (const frame of extractedFrames) {
+      if (frame.url.startsWith('blob:')) {
+        registry.set(frame.id, frame.url);
+      }
+    }
+
+    for (const [frameId, url] of registry.entries()) {
+      if (!activeBlobUrls.has(url)) {
+        URL.revokeObjectURL(url);
+        registry.delete(frameId);
+      }
+    }
+  }, [extractedFrames]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of objectUrlRegistryRef.current.values()) {
+        URL.revokeObjectURL(url);
+      }
+      objectUrlRegistryRef.current.clear();
+    };
+  }, []);
 
   // 从 IndexedDB 加载数据
   useEffect(() => {

@@ -71,26 +71,26 @@ const FrameCard: React.FC<FrameCardProps> = ({
                 e.stopPropagation();
                 onShowInfo?.(frame);
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white/92 text-slate-600 shadow-md backdrop-blur-sm transition-all duration-200 hover:scale-105 hover:bg-white"
+              className="flex h-6 w-6 items-center justify-center rounded-lg border border-slate-200 bg-white/92 text-slate-600 shadow-md backdrop-blur-sm transition-all duration-200 hover:scale-105 hover:bg-white"
               title="查看详细信息"
             >
-              <Info className="h-3.5 w-3.5 stroke-[2.1]" />
+              <Info className="h-3 w-3 stroke-[2.1]" />
             </button>
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 onJumpToTime?.(frame.timestamp);
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white/92 text-slate-600 shadow-md backdrop-blur-sm transition-all duration-200 hover:scale-105 hover:bg-white"
+              className="flex h-6 w-6 items-center justify-center rounded-lg border border-slate-200 bg-white/92 text-slate-600 shadow-md backdrop-blur-sm transition-all duration-200 hover:scale-105 hover:bg-white"
               title="跳转到视频时间点"
             >
-              <ExternalLink className="h-3.5 w-3.5 stroke-[2.1]" />
+              <ExternalLink className="h-3 w-3 stroke-[2.1]" />
             </button>
           </div>
 
           {/* 选中序号 */}
           {isSelected && !isRangeStart && (
-            <div className="absolute top-3 left-3 min-w-[2.3rem] rounded-xl border border-white/70 bg-indigo-500/88 px-2 py-1 text-center text-[0.95rem] font-semibold leading-none text-white shadow-[0_6px_18px_rgba(79,70,229,0.22)] backdrop-blur-sm ring-1 ring-indigo-200/70 animate-in zoom-in duration-200 [font-variant-numeric:tabular-nums]">
+            <div className="absolute top-2 left-2 flex h-6 w-6 items-center justify-center rounded-full border border-white/70 bg-indigo-500/88 text-xs font-semibold text-white shadow-[0_4px_12px_rgba(79,70,229,0.22)] backdrop-blur-sm ring-1 ring-indigo-200/70 animate-in zoom-in duration-200 [font-variant-numeric:tabular-nums]">
               {selectionOrder}
             </div>
           )}

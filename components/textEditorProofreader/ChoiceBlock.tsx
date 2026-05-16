@@ -393,7 +393,7 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
     });
 
   return (
-    <div ref={blockRef} className="mb-1.5 rounded-lg border-2 border-amber-400 overflow-visible">
+    <div ref={blockRef} className="rounded-lg border-2 border-amber-400 overflow-visible">
       <div className="px-3 py-1.5 bg-amber-400 text-white text-xs font-bold flex items-center justify-between">
         <span>分歧选项</span>
         <div className="flex gap-1">

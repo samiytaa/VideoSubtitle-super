@@ -67,6 +67,7 @@ export interface ProgressData {
 export interface ExtractedFrame {
   id: string;
   url: string;
+  blob?: Blob;
   timestamp: string;
   filename: string;
   videoName: string;

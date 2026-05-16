@@ -55,6 +55,6 @@ export interface GalleryToolbarProps {
   onImportClick: () => void;
   onFileImport: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onDownloadZip: () => void;
-  onClearAllData: () => void;
   onMergeGroupsClick: () => void;
+  onSelectAll: () => void;
 }

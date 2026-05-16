@@ -55,7 +55,6 @@ type AppAction =
 const TAB_TO_PATH: Record<Tab, string> = {
   extract: '/',
   gallery: '/img',
-  proofread: '/convert',
   proofread2: '/proofread',
   baimiao: '/baimiao-ocr',
   aichat: '/ai-chat',
@@ -64,7 +63,6 @@ const TAB_TO_PATH: Record<Tab, string> = {
 const PATH_TO_TAB: Record<string, Tab> = {
   '/':           'extract',
   '/img':        'gallery',
-  '/convert':    'proofread',
   '/proofread':  'proofread2',
   '/baimiao-ocr':'baimiao',
   '/ai-chat':    'aichat',
@@ -73,7 +71,6 @@ const PATH_TO_TAB: Record<string, Tab> = {
 
 const KNOWN_ROUTE_PATHS = Object.values(TAB_TO_PATH);
 const GalleryTab = React.lazy(() => import('./components/app/GalleryTab'));
-const ProofreadTab = React.lazy(() => import('./components/app/ProofreadTab'));
 const ProofreadEditorTab = React.lazy(() => import('./components/app/ProofreadEditorTab'));
 const BaimiaoTab = React.lazy(() => import('./components/app/BaimiaoTab'));
 const AiChatTab = React.lazy(() => import('./components/AiChatTab'));
@@ -430,7 +427,6 @@ const AppContent: React.FC = () => {
     const currentNextStepInfo = videoProcessing.nextStepInfoRef.current;
     if (currentNextStepInfo && currentNextStepInfo.preset) {
       notifier.addToast('对话截取完成，开始截取地点...', 'info');
-      await waitForUi(1000);
 
       const locationPreset = currentNextStepInfo.preset;
       videoProcessing.setRoi(presetToRoi(locationPreset));
@@ -465,8 +461,6 @@ const AppContent: React.FC = () => {
     if (pendingDedup) {
       dispatch({ type: 'SET_PENDING_DEDUPLICATION', payload: null });
 
-      await waitForUi(800);
-
       if (pendingDedup.dialogue) {
         await deduplication.performDeduplication('group1', '【对话】');
       }
@@ -482,7 +476,6 @@ const AppContent: React.FC = () => {
       const targetGroup = videoProcessing.params.selectedGroup;
       const groupLabel = targetGroup === 'group1' ? '【对话】' : '【地点】';
 
-      await waitForUi(800);
       await deduplication.performDeduplication(targetGroup, groupLabel);
     }
 
@@ -683,12 +676,6 @@ const AppContent: React.FC = () => {
                 onMergeGroups={frameManagement.handleMergeGroups}
                 onJumpToTime={handleJumpToTime}
               />
-            </Suspense>
-          )}
-
-          {activeTab === 'proofread' && (
-            <Suspense fallback={tabLoadingFallback}>
-              <ProofreadTab />
             </Suspense>
           )}
 

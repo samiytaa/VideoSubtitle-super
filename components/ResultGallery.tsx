@@ -242,7 +242,11 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
     setIsDownloading(true);
     try {
       await downloadAsZip(
-        items.map((i) => ({ url: i.url, filename: i.filename })),
+        items.map((i) => ({
+          url: i.url,
+          filename: i.filename,
+          blob: 'blob' in i ? i.blob : undefined,
+        })),
         viewType === 'frames'
           ? `字幕截取_${Date.now()}.zip`
           : `拼接结果_${Date.now()}.zip`
@@ -351,12 +355,6 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
     setSelectedIds(new Set());
     setSelectedOrder([]);
     notifier.addToast(`已清空${viewType === 'frames' ? '截取' : '拼接'}结果`, 'success');
-  };
-
-  const handleClearAllData = () => {
-    onClearAll?.();
-    setSelectedIds(new Set());
-    setSelectedOrder([]);
   };
 
   const handleMergeSelected = () => {
@@ -525,8 +523,8 @@ const ResultGallery: React.FC<ResultGalleryProps> = ({
           onImportClick={handleImportClick}
           onFileImport={handleFileImport}
           onDownloadZip={handleDownloadZip}
-          onClearAllData={handleClearAllData}
           onMergeGroupsClick={() => setShowMergeGroupDialog(true)}
+          onSelectAll={selectAll}
         />
 
         <PaginationToolbar

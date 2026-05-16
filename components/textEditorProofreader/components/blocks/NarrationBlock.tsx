@@ -15,7 +15,7 @@ const NarrationBlockItem = React.memo(({ block, index, blockKey }: BasicBlockIte
     <div
       key={index}
       ref={(el) => editor.actions.setBlockRef(blockKey, el)}
-      className={`group relative z-0 overflow-visible px-4 py-2.5 mb-2.5 last:mb-0 rounded-lg text-sm leading-relaxed cursor-pointer transition-all hover:z-20 ${isMenuOpen ? 'z-30' : ''} ${isEditing ? 'ring-2 ring-indigo-500' : ''}`}
+      className={`group relative z-0 overflow-visible px-4 py-2.5 rounded-lg text-sm leading-relaxed cursor-pointer transition-all hover:z-20 ${isMenuOpen ? 'z-30' : ''} ${isEditing ? 'ring-2 ring-indigo-500' : ''}`}
       style={{ backgroundColor: '#7b7b77', color: '#ffffff' }}
       onClick={() => !isEditing && editor.actions.startEditing(index, block)}
       onMouseEnter={(e) => { if (!isEditing) e.currentTarget.style.backgroundColor = '#8a8a86'; }}

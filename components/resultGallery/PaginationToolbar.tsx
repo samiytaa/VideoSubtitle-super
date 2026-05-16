@@ -47,21 +47,17 @@ const PaginationToolbar: React.FC<PaginationToolbarProps> = ({
   return (
     <div className="pt-1">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        {/* 左侧：全选和计数 */}
+        {/* 左侧：全选按钮和计数信息 */}
         <div className="flex items-center gap-2">
           <button
             onClick={onSelectAll}
-            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 rounded transition-colors"
-            title={allCurrentSelected ? '取消全选' : '全选当前页'}
+            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+            title="全选所有图片"
           >
-            {allCurrentSelected ? (
-              <CheckSquare className="w-3 h-3 text-indigo-600" />
-            ) : (
-              <Square className="w-3 h-3" />
-            )}
+            <CheckSquare className="w-3.5 h-3.5" />
             全选
           </button>
-
+          
           <div className="text-xs text-gray-600 font-medium">
             {startIndex}-{endIndex} / {totalCount}
           </div>
@@ -69,7 +65,7 @@ const PaginationToolbar: React.FC<PaginationToolbarProps> = ({
 
         {/* 中间：分页控制 */}
         {totalPages > 1 && (
-          <div className="flex items-center gap-1 rounded-xl bg-gray-50 px-2 py-0.5">
+          <div className="flex items-center gap-1 px-2 py-0.5">
             <button
               onClick={() => onPageChange(1)}
               disabled={currentPage === 1}
@@ -134,10 +130,8 @@ const PaginationToolbar: React.FC<PaginationToolbarProps> = ({
         <PaginationControls
           itemsPerRow={itemsPerRow}
           itemsPerPage={itemsPerPage}
-          totalCount={totalCount}
           onItemsPerRowChange={onItemsPerRowChange}
           onItemsPerPageChange={onItemsPerPageChange}
-          onClearCurrent={onClearCurrent}
         />
       </div>
     </div>

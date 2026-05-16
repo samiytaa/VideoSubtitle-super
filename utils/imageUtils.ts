@@ -14,10 +14,39 @@ export const downloadFile = (url: string, filename: string) => {
   document.body.removeChild(link);
 };
 
+const isDataUrl = (url: string): boolean => url.startsWith('data:');
+
+const blobFromImageSource = async (image: { url: string; blob?: Blob }): Promise<Blob> => {
+  if (image.blob) {
+    return image.blob;
+  }
+
+  if (isDataUrl(image.url)) {
+    const base64Data = image.url.split(',')[1] ?? '';
+    const mimeMatch = image.url.match(/^data:([^;]+);base64,/);
+    const mimeType = mimeMatch?.[1] ?? 'application/octet-stream';
+    const binary = atob(base64Data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mimeType });
+  }
+
+  const response = await fetch(image.url);
+  if (!response.ok) {
+    throw new Error(`图片读取失败: ${response.status}`);
+  }
+  return response.blob();
+};
+
 /**
  * 将多个图片打包成 ZIP 并下载，每50张一组放入子文件夹
  */
-export const downloadAsZip = async (images: Array<{ url: string; filename: string }>, zipFilename: string) => {
+export const downloadAsZip = async (
+  images: Array<{ url: string; filename: string; blob?: Blob }>,
+  zipFilename: string
+) => {
   // 动态导入 JSZip
   const JSZip = (await import('jszip')).default;
   
@@ -33,9 +62,9 @@ export const downloadAsZip = async (images: Array<{ url: string; filename: strin
       : '';
     const image = images[i];
     try {
-      const base64Data = image.url.split(',')[1];
       const filePath = folderName ? `${folderName}/${image.filename}` : image.filename;
-      zip.file(filePath, base64Data, { base64: true });
+      const blob = await blobFromImageSource(image);
+      zip.file(filePath, blob);
     } catch (error) {
       handleError(error, undefined, { context: `Failed to add ${image.filename} to zip` });
     }

@@ -1,6 +1,8 @@
 import { useReducer } from 'react';
 import { isDialogueBlock, ModalKey, NarrationType, ParsedBlock, SearchResult } from './types';
 
+type StateUpdater<T> = T | ((prev: T) => T);
+
 interface EditorUiState {
   editingBlockIndex: number | null;
   editingContent: string;
@@ -165,12 +167,15 @@ export const useEditorUiState = () => {
     setEditingSubCharacter: (value: string) => setField('editingSubCharacter', value),
     setEditingSubAvatar: (value: string) => setField('editingSubAvatar', value),
     setEditingSubNarrationType: (value: NarrationType) => setField('editingSubNarrationType', value),
-    setChoiceSelectedOption: (value: Record<number, number | null>) => setField('choiceSelectedOption', value),
+    setChoiceSelectedOption: (value: StateUpdater<Record<number, number | null>>) =>
+      setField('choiceSelectedOption', typeof value === 'function' ? value(uiState.choiceSelectedOption) : value),
     setEditingNestedLabel2: (value: { blockIndex: number; showIndex: number } | null) => setField('editingNestedLabel2', value),
     setEditingNestedLabelValue: (value: string) => setField('editingNestedLabelValue', value),
     setIsMultiSelectMode: (value: boolean) => setField('isMultiSelectMode', value),
-    setSelectedBlockIndices: (value: Set<number>) => setField('selectedBlockIndices', value),
-    setSelectedNestedKeys: (value: Set<string>) => setField('selectedNestedKeys', value),
+    setSelectedBlockIndices: (value: StateUpdater<Set<number>>) =>
+      setField('selectedBlockIndices', typeof value === 'function' ? value(uiState.selectedBlockIndices) : value),
+    setSelectedNestedKeys: (value: StateUpdater<Set<string>>) =>
+      setField('selectedNestedKeys', typeof value === 'function' ? value(uiState.selectedNestedKeys) : value),
     clearSelections: () => {
       setField('selectedBlockIndices', new Set<number>());
       setField('selectedNestedKeys', new Set<string>());

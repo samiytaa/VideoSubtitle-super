@@ -25,6 +25,10 @@ const FormatConverter: React.FC = () => {
     }
   });
   const { addToast } = useNotifier();
+  
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const inputContentRef = useRef<HTMLDivElement>(null);
+  const outputContentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     localStorage.setItem(RECENT_TITLES_STORAGE_KEY, JSON.stringify(recentTitles));
@@ -291,143 +295,177 @@ const FormatConverter: React.FC = () => {
       </div>
 
 
-      <div className="flex min-h-0 flex-1 gap-3">
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-              <div className="flex shrink-0 items-center gap-1.5">
-                <FileText className="h-3.5 w-3.5 text-gray-500" />
-                <span className="text-xs font-medium text-gray-600">输入文本</span>
-              </div>
-              {mode === 'mitan' && (
-                <>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={titleInput}
-                      onChange={(e) => setTitleInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddTitle()}
-                      placeholder="标题名..."
-                      className="w-24 rounded-md border border-gray-300 px-2 py-1 text-xs transition-shadow duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddTitle}
-                      className="whitespace-nowrap rounded-md bg-indigo-100 px-2 py-1 text-xs text-indigo-700 transition-colors duration-150 hover:bg-indigo-200"
-                    >
-                      + 标题
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={chapterInput}
-                      onChange={(e) => setChapterInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddChapter()}
-                      placeholder="章节数字..."
-                      className="w-20 rounded-md border border-gray-300 px-2 py-1 text-xs transition-shadow duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddChapter}
-                      className="whitespace-nowrap rounded-md bg-indigo-100 px-2 py-1 text-xs text-indigo-700 transition-colors duration-150 hover:bg-indigo-200"
-                    >
-                      + 章节
-                    </button>
-                  </div>
-                  {recentTitles.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1">
-                      <span className="text-xs text-gray-400">最近:</span>
-                      {recentTitles.map((title) => (
-                        <span key={title} className="inline-flex items-center rounded border border-gray-200 bg-white text-xs text-gray-600">
-                          <button
-                            type="button"
-                            onClick={() => applyTitle(title)}
-                            className="px-1.5 py-0.5 transition-colors duration-150 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-                          >
-                            《{title}》
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRecentTitles((prev) => prev.filter((t) => t !== title))}
-                            className="border-l border-gray-200 px-1 py-0.5 text-gray-400 transition-colors duration-150 hover:bg-red-50 hover:text-red-500"
-                            aria-label="删除"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
+      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
+        <div ref={scrollContainerRef} className="flex min-h-0 flex-1 gap-3 overflow-y-auto">
+          <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-gray-200 bg-white overflow-hidden shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+            <div className="shrink-0 flex items-center gap-2 p-2 bg-white border-b border-gray-200 sticky top-0 z-10">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <FileText className="h-4 w-4 text-gray-500" />
+                  <span className="text-sm font-medium text-gray-700">输入文本</span>
+                </div>
+                {mode === 'mitan' && (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={titleInput}
+                        onChange={(e) => setTitleInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddTitle()}
+                        placeholder="标题名..."
+                        className="w-24 rounded-md border border-gray-300 px-2 py-1 text-xs transition-shadow duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddTitle}
+                        className="whitespace-nowrap rounded-md bg-indigo-100 px-2 py-1 text-xs text-indigo-700 transition-colors duration-150 hover:bg-indigo-200"
+                      >
+                        + 标题
+                      </button>
                     </div>
-                  )}
-                </>
-              )}
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={chapterInput}
+                        onChange={(e) => setChapterInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddChapter()}
+                        placeholder="章节数字..."
+                        className="w-20 rounded-md border border-gray-300 px-2 py-1 text-xs transition-shadow duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddChapter}
+                        className="whitespace-nowrap rounded-md bg-indigo-100 px-2 py-1 text-xs text-indigo-700 transition-colors duration-150 hover:bg-indigo-200"
+                      >
+                        + 章节
+                      </button>
+                    </div>
+                    {recentTitles.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="text-xs text-gray-400">最近:</span>
+                        {recentTitles.map((title) => (
+                          <span key={title} className="inline-flex items-center rounded border border-gray-200 bg-white text-xs text-gray-600">
+                            <button
+                              type="button"
+                              onClick={() => applyTitle(title)}
+                              className="px-1.5 py-0.5 transition-colors duration-150 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                            >
+                              《{title}》
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRecentTitles((prev) => prev.filter((t) => t !== title))}
+                              className="border-l border-gray-200 px-1 py-0.5 text-gray-400 transition-colors duration-150 hover:bg-red-50 hover:text-red-500"
+                              aria-label="删除"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-          <textarea
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder="在此输入或粘贴要转换的文本..."
-            className="flex-1 resize-none rounded-lg border border-gray-300 p-3 font-mono text-sm transition-shadow duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          <div className="mt-1 text-right text-xs text-gray-400">{lineCount(inputText)}</div>
-        </div>
-
-        <div className="flex flex-col items-center justify-center gap-2 px-1">
-          <button
-            onClick={handleConvert}
-            className="flex w-20 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-indigo-700"
-          >
-            <FileCheck className="h-4 w-4" />
-            转换
-          </button>
-          <button
-            type="button"
-            onClick={() => { setInputText(''); setOutputText(''); }}
-            className="flex w-20 items-center justify-center gap-1.5 rounded-lg bg-gray-200 px-3 py-2 text-sm font-medium text-gray-600 shadow-sm transition-colors duration-150 hover:bg-gray-300"
-          >
-            <X className="h-4 w-4" />
-            清空
-          </button>
-          <button
-            onClick={handleReverseConvert}
-            disabled={!outputText}
-            className="flex w-20 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <RotateCcw className="h-4 w-4" />
-            反推
-          </button>
-        </div>
-
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="mb-1.5 flex items-center gap-1.5">
-            <FileCheck className="h-3.5 w-3.5 text-gray-500" />
-            <span className="text-xs font-medium text-gray-600">转换结果</span>
-            <div className="ml-auto flex gap-1.5">
-              <button
-                onClick={handleCopyOutput}
-                disabled={!outputText}
-                className="flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Copy className="h-3 w-3" />
-                复制
-              </button>
-              <button
-                onClick={handleDownload}
-                disabled={!outputText}
-                className="flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Download className="h-3 w-3" />
-                下载
-              </button>
+            <div
+              ref={inputContentRef}
+              className="p-3"
+              style={{
+                backgroundImage: 'repeating-linear-gradient(to bottom, rgba(248,250,252,0.0) 0, rgba(248,250,252,0.0) 2rem, rgba(99,102,241,0.045) 2rem, rgba(99,102,241,0.045) 4rem)',
+              }}
+            >
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="在此输入或粘贴要转换的文本..."
+                className="w-full resize-none border-0 bg-transparent p-0 text-[13px] leading-[2rem] focus:outline-none"
+                style={{
+                  fontFamily: 'inherit',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere',
+                  minHeight: '100%',
+                }}
+              />
             </div>
+            <div className="px-3 py-1.5 border-t border-gray-100 text-right text-[11px] text-gray-400 sticky bottom-0 bg-white z-10">{lineCount(inputText)}</div>
           </div>
-          <textarea
-            value={outputText}
-            onChange={(e) => setOutputText(e.target.value)}
-            placeholder="转换结果将显示在这里..."
-            className="flex-1 resize-none rounded-lg border border-gray-300 p-3 font-mono text-sm transition-shadow duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          <div className="mt-1 text-right text-xs text-gray-400">{lineCount(outputText)}</div>
+
+          <div className="flex flex-col items-center justify-start gap-2 px-1 pt-12 shrink-0">
+            <button
+              onClick={handleConvert}
+              className="flex w-20 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-indigo-700"
+            >
+              <FileCheck className="h-4 w-4" />
+              转换
+            </button>
+            <button
+              type="button"
+              onClick={() => { setInputText(''); setOutputText(''); }}
+              className="flex w-20 items-center justify-center gap-1.5 rounded-lg bg-gray-200 px-3 py-2 text-sm font-medium text-gray-600 shadow-sm transition-colors duration-150 hover:bg-gray-300"
+            >
+              <X className="h-4 w-4" />
+              清空
+            </button>
+            <button
+              onClick={handleReverseConvert}
+              disabled={!outputText}
+              className="flex w-20 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RotateCcw className="h-4 w-4" />
+              反推
+            </button>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-gray-200 bg-white overflow-hidden shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+            <div className="shrink-0 flex items-center gap-2 p-2 bg-white border-b border-gray-200 sticky top-0 z-10">
+              <div className="flex items-center gap-1.5">
+                <FileCheck className="h-4 w-4 text-gray-500" />
+                <span className="text-sm font-medium text-gray-700">转换结果</span>
+              </div>
+              <div className="ml-auto flex gap-1.5">
+                <button
+                  onClick={handleCopyOutput}
+                  disabled={!outputText}
+                  className="flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Copy className="h-3 w-3" />
+                  复制
+                </button>
+                <button
+                  onClick={handleDownload}
+                  disabled={!outputText}
+                  className="flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Download className="h-3 w-3" />
+                  下载
+                </button>
+              </div>
+            </div>
+            <div
+              ref={outputContentRef}
+              className="p-3"
+              style={{
+                backgroundImage: 'repeating-linear-gradient(to bottom, rgba(248,250,252,0.0) 0, rgba(248,250,252,0.0) 2rem, rgba(99,102,241,0.045) 2rem, rgba(99,102,241,0.045) 4rem)',
+              }}
+            >
+              <textarea
+                value={outputText}
+                onChange={(e) => setOutputText(e.target.value)}
+                placeholder="转换结果将显示在这里..."
+                className="w-full resize-none border-0 bg-transparent p-0 text-[13px] leading-[2rem] focus:outline-none"
+                style={{
+                  fontFamily: '"Cascadia Code", "Consolas", "Courier New", monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere',
+                  minHeight: '100%',
+                }}
+              />
+            </div>
+            <div className="px-3 py-1.5 border-t border-gray-100 text-right text-[11px] text-gray-400 sticky bottom-0 bg-white z-10">{lineCount(outputText)}</div>
+          </div>
         </div>
       </div>
     </div>

@@ -1,7 +1,6 @@
 import React from 'react';
 import BaimiaoOcrTab from '../BaimiaoOcrTab';
 import CompactGallery from '../CompactGallery';
-import FormatConverter from '../FormatConverter';
 import ResizablePanel from '../ResizablePanel';
 import ResultGallery from '../ResultGallery';
 import RoiSelector from '../RoiSelector';
@@ -133,16 +132,6 @@ export const GalleryTab: React.FC<GalleryTabProps> = ({
       onMergeGroups={onMergeGroups}
       onJumpToTime={onJumpToTime}
     />
-  </div>
-);
-
-export const ProofreadTab: React.FC = () => (
-  <div className="h-[calc(100vh-5rem)] flex flex-col">
-    <section className="flex-1 flex flex-col min-h-0">
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200/60 p-4 flex-1 flex flex-col min-h-0">
-        <FormatConverter />
-      </div>
-    </section>
   </div>
 );
 

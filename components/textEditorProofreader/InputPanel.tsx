@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useEffect, useState, useImperativeHandle, useMemo } from 'react';
-import { PanelRightClose, PanelRightOpen, FileText, ArrowRightLeft } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, BookOpen, ChevronDown, Copy } from 'lucide-react';
 import { SIDE_PANEL_COLLAPSED_WIDTH } from '../panelConstants';
+import SearchBar from './SearchBar';
 
 interface InputPanelProps {
   isCollapsed: boolean;
@@ -20,6 +21,55 @@ interface InputPanelProps {
 
 const MIN_WIDTH = 520;
 const DEFAULT_WIDTH = 640;
+type EditorTab = 'original' | 'converted';
+
+type HelpItem = {
+  label: string;
+  example: string;
+  tone: 'indigo' | 'violet';
+  suffix?: string;
+};
+
+const PROOFREAD_HELP_ITEMS: HelpItem[] = [
+  {
+    label: '对话',
+    example: '角色名：对话内容',
+    tone: 'indigo',
+  },
+  {
+    label: '心理活动',
+    example: '（内容）',
+    tone: 'indigo',
+  },
+  {
+    label: '旁白',
+    example: '【内容】',
+    suffix: ' 或普通文本',
+    tone: 'indigo',
+  },
+  {
+    label: '场景标记',
+    example: '【==场景名==】',
+    tone: 'indigo',
+  },
+  {
+    label: '嵌套分歧',
+    example: '{{选择开始}} / {{选择：选项}} / {{选择结束}}',
+    tone: 'violet',
+  },
+] as const;
+const MITAN_HELP_ITEMS: HelpItem[] = [
+  {
+    label: '标题',
+    example: '《角色名》',
+    tone: 'indigo',
+  },
+  {
+    label: '章节',
+    example: '==数字==',
+    tone: 'indigo',
+  },
+] as const;
 
 /** 从 contentEditable DOM 提取纯文本（保留换行） */
 function extractPlainText(el: HTMLElement): string {
@@ -41,19 +91,50 @@ function extractPlainText(el: HTMLElement): string {
   return text;
 }
 
-/** 将纯文本转为带视觉换行的 HTML（}} 后插入视觉 br） */
-function textToDisplayHtml(text: string): string {
-  if (!text) return '';
-  // 先转义 HTML 特殊字符
-  const escaped = text
+function escapeHtml(text: string): string {
+  return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  // 真实换行 → <br>
-  // }} 后面（非换行）→ 插入视觉 <br data-visual="1">
-  return escaped
+}
+
+/** 将纯文本片段转为带视觉换行的 HTML（}} 后插入视觉 br） */
+function formatDisplayFragment(text: string): string {
+  if (!text) return '';
+  return escapeHtml(text)
     .replace(/\n/g, '<br>')
     .replace(/}}(?!<br>)/g, '}}<br data-visual="1">');
+}
+
+/** 将纯文本转为可显示 HTML，并支持搜索高亮 */
+function textToDisplayHtml(text: string, searchKeyword = '', activeMatchIndex = -1): string {
+  if (!text) return '';
+  if (!searchKeyword.trim()) return formatDisplayFragment(text);
+
+  const matches = getMatchOffsets(text, searchKeyword);
+  if (matches.length === 0) return formatDisplayFragment(text);
+
+  const parts: string[] = [];
+  let cursor = 0;
+
+  matches.forEach((match, index) => {
+    if (cursor < match.start) {
+      parts.push(formatDisplayFragment(text.slice(cursor, match.start)));
+    }
+
+    const matchHtml = formatDisplayFragment(text.slice(match.start, match.end));
+    const className = index === activeMatchIndex
+      ? 'bg-amber-200 ring-1 ring-amber-300 rounded-[4px]'
+      : 'bg-amber-100 rounded-[4px]';
+    parts.push(`<mark class="${className}" data-search-match="${index}">${matchHtml}</mark>`);
+    cursor = match.end;
+  });
+
+  if (cursor < text.length) {
+    parts.push(formatDisplayFragment(text.slice(cursor)));
+  }
+
+  return parts.join('');
 }
 
 /** 保存并恢复光标位置（基于文本偏移） */
@@ -101,11 +182,29 @@ function setCaretOffset(el: HTMLElement, offset: number) {
   sel.addRange(range);
 }
 
+function findScrollContainer(el: HTMLElement): HTMLElement | null {
+  let current: HTMLElement | null = el;
+  while (current) {
+    if (
+      current.dataset.editorScrollContainer === 'true' ||
+      (current.scrollHeight > current.clientHeight && current.clientHeight > 0)
+    ) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return el.parentElement;
+}
+
 interface InputEditorProps {
   value: string;
   onChange: (text: string) => void;
   placeholder?: string;
   mode?: 'original' | 'converted';
+  preserveLineMapping?: boolean;
+  wrapLongLines?: boolean;
+  searchKeyword?: string;
+  activeMatchIndex?: number;
 }
 
 interface InputEditorHandle {
@@ -204,7 +303,16 @@ function findTextPosition(root: HTMLElement, targetOffset: number): { node: Node
   return { node: last.node, offset: last.node.textContent?.length ?? 0 };
 }
 
-const InputEditor = React.forwardRef<InputEditorHandle, InputEditorProps>(({ value, onChange, placeholder, mode = 'original' }, ref) => {
+const InputEditor = React.forwardRef<InputEditorHandle, InputEditorProps>(({
+  value,
+  onChange,
+  placeholder,
+  mode = 'original',
+  preserveLineMapping = false,
+  wrapLongLines = false,
+  searchKeyword = '',
+  activeMatchIndex = -1,
+}, ref) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const isComposing = useRef(false);
   // 记录上一次渲染的 value，避免外部 value 未变时重置 DOM
@@ -218,17 +326,17 @@ const InputEditor = React.forwardRef<InputEditorHandle, InputEditorProps>(({ val
     lastValueRef.current = value;
 
     const offset = document.activeElement === el ? getCaretOffset(el) : null;
-    el.innerHTML = textToDisplayHtml(value);
+    el.innerHTML = textToDisplayHtml(value, searchKeyword, activeMatchIndex);
     if (offset !== null) {
       setCaretOffset(el, offset);
     }
-  }, [value]);
+  }, [activeMatchIndex, searchKeyword, value]);
 
   // 初始化
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
-    el.innerHTML = textToDisplayHtml(value);
+    el.innerHTML = textToDisplayHtml(value, searchKeyword, activeMatchIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -243,10 +351,10 @@ const InputEditor = React.forwardRef<InputEditorHandle, InputEditorProps>(({ val
     onChange(plain);
 
     // 重新渲染显示（插入视觉换行）
-    el.innerHTML = textToDisplayHtml(plain);
+    el.innerHTML = textToDisplayHtml(plain, searchKeyword, activeMatchIndex);
     // 恢复光标（偏移量不变，因为视觉 br 不计入文本长度）
     setCaretOffset(el, offset);
-  }, [onChange]);
+  }, [activeMatchIndex, onChange, searchKeyword]);
 
   const handleCompositionEnd = useCallback(() => {
     isComposing.current = false;
@@ -290,7 +398,7 @@ const InputEditor = React.forwardRef<InputEditorHandle, InputEditorProps>(({ val
       selection.addRange(range);
       el.focus();
 
-      const scrollContainer = el.parentElement;
+      const scrollContainer = findScrollContainer(el);
       const rect = range.getBoundingClientRect();
       const containerRect = scrollContainer?.getBoundingClientRect();
 
@@ -312,12 +420,12 @@ const InputEditor = React.forwardRef<InputEditorHandle, InputEditorProps>(({ val
       onCompositionEnd={handleCompositionEnd}
       onPaste={handlePaste}
       data-placeholder={placeholder}
-      className="inline-block min-w-full min-h-full p-2 border border-transparent rounded-md text-[13px] focus:outline-none"
+      className="block h-full min-h-full min-w-full overflow-y-auto overflow-x-hidden p-2 border border-transparent rounded-md text-[13px] focus:outline-none"
       style={{
         fontFamily: mode === 'converted' ? '"Cascadia Code", "Consolas", "Courier New", monospace' : 'inherit',
-        whiteSpace: 'pre',
-        wordBreak: 'normal',
-        overflowWrap: 'normal',
+        whiteSpace: wrapLongLines ? 'pre-wrap' : preserveLineMapping ? 'pre' : 'pre-wrap',
+        wordBreak: wrapLongLines ? 'break-word' : preserveLineMapping ? 'normal' : 'break-word',
+        overflowWrap: wrapLongLines ? 'anywhere' : preserveLineMapping ? 'normal' : 'anywhere',
         lineHeight: '2rem',
       }}
     />
@@ -342,324 +450,51 @@ function getMatchOffsets(text: string, keyword: string): Array<{ start: number; 
   return matches;
 }
 
-interface AlignedRow {
-  original: string;
-  converted: string;
-}
-
-function convertOriginalLine(trimmedLine: string): string {
-  if (/^【==.+?==】$/.test(trimmedLine)) {
-    const match = trimmedLine.match(/【==(.+?)==】/);
-    return match ? `{{旁白|【${match[1]}】}}` : `{{旁白|${trimmedLine}}}`;
-  }
-  if (trimmedLine.startsWith('（') && trimmedLine.endsWith('）')) {
-    return `{{旁白|心理|${trimmedLine.slice(1, -1)}}}`;
-  }
-  if (trimmedLine.startsWith('【') && trimmedLine.endsWith('】')) {
-    return `{{旁白|${trimmedLine.slice(1, -1)}}}`;
-  }
-  if (trimmedLine.includes('：')) {
-    const idx = trimmedLine.indexOf('：');
-    return `{{对话|${trimmedLine.substring(0, idx)}|${trimmedLine.substring(idx + 1)}}}`;
-  }
-  return `{{旁白|${trimmedLine}}}`;
-}
-
-function buildAlignedRows(originalText: string, convertedText: string): AlignedRow[] {
-  const originalLines = originalText.split('\n').map((line) => line.trim()).filter(Boolean);
-  const rows: AlignedRow[] = [];
-
-  if (originalLines.length === 0) {
-    return convertedText.split('\n').filter(Boolean).map((converted) => ({ original: '', converted }));
-  }
-
-  const hasNestedChoice = originalText.includes('{{选择开始}}');
-  if (hasNestedChoice) {
-    rows.push({ original: '', converted: '{{JS|Qiantao.js}}' });
-  }
-  rows.push({ original: '', converted: '{{对话-头}}' });
-
-  let i = 0;
-  while (i < originalLines.length) {
-    const line = originalLines[i];
-
-    if (/^《.+》$/.test(line)) {
-      rows.push({ original: line, converted: '' });
-      i++;
-      continue;
-    }
-
-    const chapterMatch = line.match(/^==(\d+)==$/);
-    if (chapterMatch) {
-      rows.push({ original: line, converted: `{{密探故事录入|头|标题|${chapterMatch[1]}}}` });
-      i++;
-      continue;
-    }
-
-    if (line === '{{选择开始}}') {
-      const options: { label: string; headerLine: string; lines: string[] }[] = [];
-      let current: { label: string; headerLine: string; lines: string[] } | null = null;
-
-      rows.push({ original: line, converted: '{{嵌套分歧|头}}' });
-      i++;
-
-      while (i < originalLines.length && originalLines[i] !== '{{选择结束}}') {
-        const optionMatch = originalLines[i].match(/^{{选择\d*[：:](.+?)}}$/);
-        if (optionMatch) {
-          if (current) options.push(current);
-          current = { label: optionMatch[1], headerLine: originalLines[i], lines: [] };
-        } else if (current) {
-          current.lines.push(originalLines[i]);
-        }
-        i++;
-      }
-      if (current) options.push(current);
-
-      options.forEach((option, optionIndex) => {
-        rows.push({ original: option.headerLine, converted: `{{嵌套分歧|${option.label}|${optionIndex + 1}}}` });
-      });
-      rows.push({ original: '', converted: '{{嵌套分歧|尾}}' });
-
-      options.forEach((option, optionIndex) => {
-        rows.push({
-          original: '',
-          converted: optionIndex === 0 ? '{{嵌套分歧|内容头|显示=1}}' : '{{嵌套分歧|内容头}}',
-        });
-        option.lines.forEach((contentLine) => {
-          rows.push({ original: contentLine, converted: convertOriginalLine(contentLine) });
-        });
-        rows.push({ original: '', converted: '{{嵌套分歧|内容尾}}' });
-      });
-
-      if (i < originalLines.length && originalLines[i] === '{{选择结束}}') {
-        rows.push({ original: originalLines[i], converted: '' });
-        i++;
-      }
-      continue;
-    }
-
-    rows.push({ original: line, converted: convertOriginalLine(line) });
-    i++;
-  }
-
-  rows.push({ original: '', converted: '{{对话-尾}}' });
-  return rows;
-}
-
-interface AlignedTextGridProps {
-  rows: AlignedRow[];
-  scrollRef: React.RefObject<HTMLDivElement | null>;
-  activeRowIndex: number | null;
-  onOriginalRowChange: (rowIndex: number, newValue: string) => void;
-  onConvertedRowChange: (rowIndex: number, newValue: string) => void;
-}
-
-/** 单个可编辑单元格，避免每次父组件重渲染时重置光标 */
-const EditableCell = React.memo(({
-  value,
-  isActive,
-  isConverted,
-  onChange,
-}: {
-  value: string;
-  isActive: boolean;
-  isConverted?: boolean;
-  onChange: (newValue: string) => void;
-}) => {
-  const ref = useRef<HTMLDivElement>(null);
-  const isComposing = useRef(false);
-  const lastValueRef = useRef(value);
-
-  // 仅当外部 value 与内部不同时才同步（避免编辑中被覆盖）
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (value === lastValueRef.current) return;
-    lastValueRef.current = value;
-    // 不在焦点中才覆盖，防止打字时被重置
-    if (document.activeElement !== el) {
-      el.textContent = value;
-    }
-  }, [value]);
-
-  // 初始化
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.textContent = value;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleInput = useCallback(() => {
-    if (isComposing.current) return;
-    const el = ref.current;
-    if (!el) return;
-    const text = el.textContent ?? '';
-    lastValueRef.current = text;
-    onChange(text);
-  }, [onChange]);
-
-  const handleCompositionEnd = useCallback(() => {
-    isComposing.current = false;
-    handleInput();
-  }, [handleInput]);
-
-  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const text = e.clipboardData.getData('text/plain');
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
-
-    const range = selection.getRangeAt(0);
-    range.deleteContents();
-    range.insertNode(document.createTextNode(text));
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    handleInput();
-  }, [handleInput]);
-
-  return (
-    <div
-      ref={ref}
-      contentEditable
-      suppressContentEditableWarning
-      onInput={handleInput}
-      onCompositionStart={() => { isComposing.current = true; }}
-      onCompositionEnd={handleCompositionEnd}
-      onPaste={handlePaste}
-      className={[
-        'min-h-9 min-w-0 px-3 py-1.5 text-[13px] leading-6 text-gray-950 whitespace-pre-wrap break-words outline-none',
-        'focus:bg-indigo-50/60 focus:ring-1 focus:ring-inset focus:ring-indigo-300',
-        isConverted ? 'font-mono' : '',
-        isActive ? 'bg-amber-50 ring-1 ring-inset ring-amber-300' : '',
-      ].filter(Boolean).join(' ')}
-    />
-  );
-});
-EditableCell.displayName = 'EditableCell';
-
-const AlignedTextGrid: React.FC<AlignedTextGridProps> = ({
-  rows,
-  scrollRef,
-  activeRowIndex,
-  onOriginalRowChange,
-  onConvertedRowChange,
-}) => (
-  <div ref={scrollRef} className="flex-1 overflow-y-auto p-3">
-    <div className="overflow-hidden rounded-md border border-gray-200">
-      {rows.map((row, index) => (
-        <div
-          key={index}
-          data-row-index={index}
-          className={`grid grid-cols-2 border-b border-gray-100 last:border-b-0 ${
-            index % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'
-          }`}
-        >
-          <div className="border-r border-gray-100">
-            <EditableCell
-              value={row.original}
-              isActive={activeRowIndex === index}
-              isConverted={false}
-              onChange={(v) => onOriginalRowChange(index, v)}
-            />
-          </div>
-          <EditableCell
-            value={row.converted}
-            isActive={activeRowIndex === index}
-            isConverted={true}
-            onChange={(v) => onConvertedRowChange(index, v)}
-          />
-        </div>
-      ))}
-    </div>
-  </div>
-);
-
 interface EditorPaneProps {
-  title: string;
+  label?: string;
   value: string;
   placeholder: string;
-  searchKeyword: string;
-  currentMatchIndex: number;
-  onSearchKeywordChange: (value: string) => void;
-  onJumpToRelativeMatch: (direction: 1 | -1) => void;
   onEditorChange: (text: string) => void;
   editorRef: React.RefObject<InputEditorHandle | null>;
-  scrollRef: React.RefObject<HTMLDivElement | null>;
-  onScroll: () => void;
   mode: 'original' | 'converted';
+  plainBackground?: boolean;
+  preserveLineMapping?: boolean;
+  heightClassName?: string;
+  wrapLongLines?: boolean;
+  searchKeyword?: string;
+  activeMatchIndex?: number;
 }
 
 const EditorPane: React.FC<EditorPaneProps> = ({
-  title,
+  label,
   value,
   placeholder,
-  searchKeyword,
-  currentMatchIndex,
-  onSearchKeywordChange,
-  onJumpToRelativeMatch,
   onEditorChange,
   editorRef,
-  scrollRef,
-  onScroll,
   mode,
+  plainBackground = false,
+  preserveLineMapping = false,
+  heightClassName,
+  wrapLongLines = false,
+  searchKeyword = '',
+  activeMatchIndex = -1,
 }) => {
-  const searchMatches = getMatchOffsets(value, searchKeyword);
-
-  useEffect(() => {
-    if (searchMatches.length === 0) return;
-    const activeMatch = searchMatches[Math.min(currentMatchIndex, searchMatches.length - 1)];
-    if (!activeMatch) return;
-    editorRef.current?.focusMatch(activeMatch.start, activeMatch.end);
-  }, [currentMatchIndex, editorRef, searchMatches]);
-
   return (
-    <div className="min-w-0 flex flex-col rounded-xl border border-gray-200 bg-white overflow-hidden shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
-      <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between gap-2 shrink-0">
-        <span className="text-xs font-semibold text-gray-700">{title}</span>
-        <span className="text-[11px] text-gray-400">{value ? `${value.split('\n').length} 行` : '0 行'}</span>
-      </div>
-
-      <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-1.5 shrink-0">
-        <input
-          type="text"
-          value={searchKeyword}
-          onChange={(e) => onSearchKeywordChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              onJumpToRelativeMatch(e.shiftKey ? -1 : 1);
-            }
-          }}
-          placeholder={`搜索${title}`}
-          className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-gray-200 rounded outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-        />
-        <span className={`text-[11px] w-14 text-center ${searchKeyword && searchMatches.length === 0 ? 'text-red-500' : 'text-gray-500'}`}>
-          {searchKeyword ? `${searchMatches.length === 0 ? 0 : Math.min(currentMatchIndex + 1, searchMatches.length)}/${searchMatches.length}` : '--/--'}
-        </span>
-        <button
-          onClick={() => onJumpToRelativeMatch(-1)}
-          disabled={searchMatches.length === 0}
-          className="px-2 py-1.5 text-xs text-gray-700 border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors"
-        >
-          上一个
-        </button>
-        <button
-          onClick={() => onJumpToRelativeMatch(1)}
-          disabled={searchMatches.length === 0}
-          className="px-2 py-1.5 text-xs text-gray-700 border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors"
-        >
-          下一个
-        </button>
-      </div>
-
+    <div className={`min-w-0 flex flex-col rounded-xl border border-gray-200 bg-white overflow-hidden shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] ${heightClassName ?? ''}`}>
+      {label ? (
+        <div className="shrink-0 border-b border-gray-100 px-3 py-2">
+          <span className="inline-flex rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-600 shadow-sm">
+            {label}
+          </span>
+        </div>
+      ) : null}
       <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="flex-1 overflow-auto p-3"
+        className="min-h-0 flex-1 overflow-hidden p-3"
         style={{
-          backgroundImage: 'repeating-linear-gradient(to bottom, rgba(248,250,252,0.0) 0, rgba(248,250,252,0.0) 2rem, rgba(99,102,241,0.045) 2rem, rgba(99,102,241,0.045) 4rem)',
+          backgroundImage: plainBackground
+            ? 'none'
+            : 'repeating-linear-gradient(to bottom, rgba(248,250,252,0.0) 0, rgba(248,250,252,0.0) 2rem, rgba(99,102,241,0.045) 2rem, rgba(99,102,241,0.045) 4rem)',
+          backgroundColor: plainBackground ? '#ffffff' : undefined,
         }}
       >
         <InputEditor
@@ -668,6 +503,10 @@ const EditorPane: React.FC<EditorPaneProps> = ({
           onChange={onEditorChange}
           placeholder={placeholder}
           mode={mode}
+          preserveLineMapping={preserveLineMapping}
+          wrapLongLines={wrapLongLines}
+          searchKeyword={searchKeyword}
+          activeMatchIndex={activeMatchIndex}
         />
       </div>
     </div>
@@ -693,38 +532,19 @@ const InputPanel: React.FC<InputPanelProps> = ({
     const saved = localStorage.getItem('inputPanel_width');
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
-  const [inputMode, setInputMode] = useState<'none' | 'original' | 'converted'>('none');
+  const [activeTab, setActiveTab] = useState<EditorTab>('original');
+  const [helpExpanded, setHelpExpanded] = useState(false);
   const originalEditorRef = useRef<InputEditorHandle>(null);
   const convertedEditorRef = useRef<InputEditorHandle>(null);
-  const originalScrollRef = useRef<HTMLDivElement>(null);
-  const convertedScrollRef = useRef<HTMLDivElement>(null);
-  const syncScrollSourceRef = useRef<'original' | 'converted' | null>(null);
-  const [comparisonSearchKeyword, setComparisonSearchKeyword] = useState('');
-  const [comparisonMatchIndex, setComparisonMatchIndex] = useState(0);
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
 
   const isResizing = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
-  const alignedRows = useMemo(() => buildAlignedRows(originalText, convertedText), [originalText, convertedText]);
-  const comparisonMatchRows = useMemo(() => {
-    if (!comparisonSearchKeyword.trim()) return [];
-    return alignedRows
-      .map((row, index) => (row.original.includes(comparisonSearchKeyword) || row.converted.includes(comparisonSearchKeyword) ? index : -1))
-      .filter((index) => index >= 0);
-  }, [alignedRows, comparisonSearchKeyword]);
-  const activeComparisonRowIndex = comparisonMatchRows[comparisonMatchIndex] ?? null;
-
-  const scrollToAlignedRow = useCallback((rowIndex: number) => {
-    const container = leftScrollRef.current;
-    const rowElement = container?.querySelector(`[data-row-index="${rowIndex}"]`) as HTMLElement | null;
-    if (!container || !rowElement) return;
-
-    const offsetTop = rowElement.offsetTop - container.offsetTop;
-    container.scrollTo({
-      top: Math.max(0, offsetTop - container.clientHeight / 2 + rowElement.clientHeight / 2),
-      behavior: 'smooth',
-    });
-  }, [leftScrollRef]);
+  const currentText = activeTab === 'original' ? originalText : convertedText;
+  const currentEditorRef = activeTab === 'original' ? originalEditorRef : convertedEditorRef;
+  const searchMatches = useMemo(() => getMatchOffsets(currentText, searchKeyword), [currentText, searchKeyword]);
 
   const handleResizeMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -767,18 +587,24 @@ const InputPanel: React.FC<InputPanelProps> = ({
   }, [panelWidth]);
 
   useEffect(() => {
-    if (comparisonMatchRows.length === 0) {
-      setComparisonMatchIndex(0);
+    if (searchMatches.length === 0) {
+      setSearchMatchIndex(0);
       return;
     }
-    if (comparisonMatchIndex >= comparisonMatchRows.length) {
-      setComparisonMatchIndex(0);
+    if (searchMatchIndex >= searchMatches.length) {
+      setSearchMatchIndex(0);
     }
-  }, [comparisonMatchRows.length, comparisonMatchIndex]);
+  }, [searchMatchIndex, searchMatches.length]);
 
   useEffect(() => {
-    if (activeComparisonRowIndex !== null) scrollToAlignedRow(activeComparisonRowIndex);
-  }, [activeComparisonRowIndex, scrollToAlignedRow]);
+    const activeMatch = searchMatches[searchMatchIndex];
+    if (!activeMatch) return;
+    currentEditorRef.current?.focusMatch(activeMatch.start, activeMatch.end);
+  }, [currentEditorRef, searchMatchIndex, searchMatches]);
+
+  useEffect(() => {
+    setSearchMatchIndex(0);
+  }, [activeTab]);
 
   // 将 onChange 适配为纯文本回调
   const handleOriginalEditorChange = useCallback(
@@ -801,70 +627,22 @@ const InputPanel: React.FC<InputPanelProps> = ({
     [onConvertedTextChange],
   );
 
-  const jumpComparisonMatch = useCallback((direction: 1 | -1) => {
-    const total = comparisonMatchRows.length;
+  const jumpSearchMatch = useCallback((direction: 1 | -1) => {
+    const total = searchMatches.length;
     if (total === 0) return;
-    setComparisonMatchIndex((prev) => {
+    setSearchMatchIndex((prev) => {
       if (direction === 1) return (prev + 1) % total;
       return (prev - 1 + total) % total;
     });
-  }, [comparisonMatchRows.length]);
+  }, [searchMatches.length]);
 
-  const syncScrollPosition = useCallback((source: 'original' | 'converted') => {
-    const sourceEl = source === 'original' ? originalScrollRef.current : convertedScrollRef.current;
-    const targetEl = source === 'original' ? convertedScrollRef.current : originalScrollRef.current;
-    if (!sourceEl || !targetEl) return;
-
-    const sourceMaxScroll = Math.max(1, sourceEl.scrollHeight - sourceEl.clientHeight);
-    const targetMaxScroll = Math.max(0, targetEl.scrollHeight - targetEl.clientHeight);
-    const scrollRatio = sourceEl.scrollTop / sourceMaxScroll;
-
-    syncScrollSourceRef.current = source;
-    targetEl.scrollTop = targetMaxScroll * scrollRatio;
-    window.requestAnimationFrame(() => {
-      syncScrollSourceRef.current = null;
-    });
-  }, []);
-
-  const handleOriginalScroll = useCallback(() => {
-    if (syncScrollSourceRef.current === 'converted') return;
-    syncScrollPosition('original');
-  }, [syncScrollPosition]);
-
-  const handleConvertedScroll = useCallback(() => {
-    if (syncScrollSourceRef.current === 'original') return;
-    syncScrollPosition('converted');
-  }, [syncScrollPosition]);
-
-  // 修改"转换前"某行 → 重建 originalText，转换后自动重算
-  const handleOriginalRowChange = useCallback((rowIndex: number, newValue: string) => {
-    const newRows = alignedRows.map((row, i) =>
-      i === rowIndex ? { ...row, original: newValue } : row
-    );
-    const newOriginalText = newRows
-      .map((r) => r.original)
-      .filter((line) => line.trim() !== '')
-      .join('\n');
-    const fakeEvent = {
-      target: { value: newOriginalText },
-    } as React.ChangeEvent<HTMLTextAreaElement>;
-    onOriginalTextChange(fakeEvent);
-  }, [alignedRows, onOriginalTextChange]);
-
-  // 修改"转换后"某行 → 重建 convertedText（不影响转换前）
-  const handleConvertedRowChange = useCallback((rowIndex: number, newValue: string) => {
-    const newRows = alignedRows.map((row, i) =>
-      i === rowIndex ? { ...row, converted: newValue } : row
-    );
-    const newConvertedText = newRows
-      .map((r) => r.converted)
-      .filter((line) => line.trim() !== '')
-      .join('\n');
-    const fakeEvent = {
-      target: { value: newConvertedText },
-    } as React.ChangeEvent<HTMLTextAreaElement>;
-    onConvertedTextChange(fakeEvent);
-  }, [alignedRows, onConvertedTextChange]);
+  const handleCopyCurrent = useCallback(() => {
+    if (activeTab === 'original') {
+      void onCopyOriginal();
+      return;
+    }
+    void onCopyConverted();
+  }, [activeTab, onCopyConverted, onCopyOriginal]);
 
   return (
     <div
@@ -898,169 +676,157 @@ const InputPanel: React.FC<InputPanelProps> = ({
         <>
           {/* 标题栏 */}
           <div className="px-3 py-2.5 border-b border-gray-200 flex items-center gap-2 shrink-0">
-            <span className="text-xs font-medium text-gray-700 shrink-0">输入文本</span>
-            <span className="text-[11px] text-gray-400">双栏对照</span>
             <button
               onClick={onCollapse}
-              className="ml-auto p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors shrink-0"
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors shrink-0"
               title="折叠面板"
             >
               <PanelRightClose className="w-4 h-4" />
             </button>
+            <span className="text-xs font-medium text-gray-700 shrink-0">输入文本</span>
+            <span className="text-[11px] text-gray-400">双栏对照</span>
+            <button
+              type="button"
+              onClick={() => setHelpExpanded((value) => !value)}
+              className={`ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors ${
+                helpExpanded
+                  ? 'bg-indigo-50 text-indigo-700'
+                  : 'text-gray-400 hover:bg-gray-100 hover:text-indigo-600'
+              }`}
+              title={helpExpanded ? '收起格式说明' : '展开格式说明'}
+              aria-expanded={helpExpanded}
+              aria-label="格式说明"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${helpExpanded ? 'rotate-180' : ''}`} />
+            </button>
           </div>
 
-          {/* 操作按钮 */}
+          {helpExpanded && (
+            <div className="mx-3 mt-2 shrink-0 overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50/45">
+              <div className="flex items-center gap-2 border-b border-indigo-100 px-3 py-2">
+                <BookOpen className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
+                <span className="text-xs font-semibold text-gray-800">格式说明</span>
+              </div>
+              <div className="px-3 py-3">
+                <div>
+                  <div className="mb-2 text-[11px] font-semibold tracking-wide text-indigo-700">通用格式</div>
+                  <ul className="space-y-2">
+                    {PROOFREAD_HELP_ITEMS.map((item) => (
+                      <li key={item.label} className="flex items-start gap-2 text-xs leading-5 text-gray-700">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />
+                        <span>
+                          {item.label}：
+                          <code className={`font-mono ${item.tone === 'violet' ? 'text-violet-600' : 'text-indigo-600'}`}>
+                            {item.example}
+                          </code>
+                          {item.suffix ?? ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="mt-3 border-t border-indigo-100 pt-3">
+                  <div className="mb-2 text-[11px] font-semibold tracking-wide text-indigo-700">密探模式特殊说明</div>
+                  <ul className="space-y-2">
+                    {MITAN_HELP_ITEMS.map((item) => (
+                      <li key={item.label} className="flex items-start gap-2 text-xs leading-5 text-gray-700">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />
+                        <span>
+                          {item.label}：
+                          <code className={`font-mono ${item.tone === 'violet' ? 'text-violet-600' : 'text-indigo-600'}`}>
+                            {item.example}
+                          </code>
+                          {item.suffix ?? ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 操作按钮 + 搜索栏同一行 */}
           <div className="px-3 py-1.5 border-b border-gray-100 flex items-center gap-2 shrink-0">
             <button
               onClick={onClear}
-              className="px-3 py-1 text-xs text-red-700 hover:bg-red-50 border border-red-200 rounded transition-colors"
+              className="shrink-0 px-3 py-1 text-xs text-red-700 hover:bg-red-50 border border-red-200 rounded transition-colors"
             >
               清空
             </button>
             <button
               onClick={onStartProofreading}
-              className="flex-1 px-3 py-1 text-xs text-white bg-indigo-600 rounded hover:bg-indigo-700 transition-colors"
+              className="shrink-0 min-w-[120px] px-3 py-1 text-xs text-white bg-indigo-600 rounded hover:bg-indigo-700 transition-colors"
             >
               开始校对
             </button>
+            <SearchBar
+              searchKeyword={searchKeyword}
+              currentMatchIndex={searchMatchIndex}
+              totalMatches={searchMatches.length}
+              onSearchKeywordChange={setSearchKeyword}
+              onJumpToRelativeMatch={jumpSearchMatch}
+              placeholder="搜索对比内容"
+              embedded
+              className="ml-1"
+            />
           </div>
 
-          {/* 双栏文本区域 */}
-          <div className="flex-1 overflow-hidden p-2">
-            {/* 空状态：两边都为空时显示选择入口 */}
-            {!originalText && !convertedText && inputMode === 'none' ? (
-              <div className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-gray-200 bg-gray-50/50">
-                <p className="text-xs text-gray-400 select-none">选择从哪一侧开始输入</p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setInputMode('original')}
-                    className="flex flex-col items-center gap-2 px-5 py-4 rounded-xl border border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 transition-colors group shadow-sm"
-                  >
-                    <FileText className="w-5 h-5 text-gray-400 group-hover:text-indigo-500 transition-colors" />
-                    <span className="text-xs font-medium text-gray-600 group-hover:text-indigo-600 transition-colors">转换前</span>
-                    <span className="text-[11px] text-gray-400 group-hover:text-indigo-400 transition-colors">输入原始文本</span>
-                  </button>
-                  <button
-                    onClick={() => setInputMode('converted')}
-                    className="flex flex-col items-center gap-2 px-5 py-4 rounded-xl border border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 transition-colors group shadow-sm"
-                  >
-                    <ArrowRightLeft className="w-5 h-5 text-gray-400 group-hover:text-indigo-500 transition-colors" />
-                    <span className="text-xs font-medium text-gray-600 group-hover:text-indigo-600 transition-colors">转换后</span>
-                    <span className="text-[11px] text-gray-400 group-hover:text-indigo-400 transition-colors">输入已转换文本</span>
-                  </button>
-                </div>
-              </div>
-            ) : !originalText && !convertedText && inputMode !== 'none' ? (
-              /* 单栏输入模式 */
-              <div className="flex h-full flex-col rounded-xl border border-gray-200 bg-white overflow-hidden">
-                <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between gap-2 shrink-0">
-                  <span className="text-xs font-semibold text-gray-700">
-                    {inputMode === 'original' ? '转换前' : '转换后'}
-                  </span>
-                  <button
-                    onClick={() => setInputMode('none')}
-                    className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
-                  >
-                    切换
-                  </button>
-                </div>
-                <div
-                  className="flex-1 overflow-auto p-3"
-                  style={{
-                    backgroundImage: 'repeating-linear-gradient(to bottom, rgba(248,250,252,0.0) 0, rgba(248,250,252,0.0) 2rem, rgba(99,102,241,0.045) 2rem, rgba(99,102,241,0.045) 4rem)',
-                  }}
+          <div className="mx-2 mb-2 mt-2 flex flex-1 min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="border-b border-gray-100 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('original')}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                    activeTab === 'original'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                  }`}
                 >
-                  <InputEditor
-                    value={inputMode === 'original' ? originalText : convertedText}
-                    onChange={(text) => {
-                      const fakeEvent = { target: { value: text } } as React.ChangeEvent<HTMLTextAreaElement>;
-                      if (inputMode === 'original') {
-                        onOriginalTextChange(fakeEvent);
-                      } else {
-                        onConvertedTextChange(fakeEvent);
-                      }
-                    }}
-                    placeholder={inputMode === 'original' ? '在此输入原始文本…' : '在此输入已转换文本…'}
-                    mode={inputMode === 'converted' ? 'converted' : 'original'}
-                  />
-                </div>
+                  转换前
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('converted')}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                    activeTab === 'converted'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                  }`}
+                >
+                  转换后
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyCurrent}
+                  className="ml-auto inline-flex shrink-0 items-center gap-1 rounded border border-gray-200 px-3 py-1 text-xs text-gray-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                  title={activeTab === 'original' ? '复制转换前内容' : '复制转换后内容'}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {copySuccess ? '已复制' : '复制'}
+                </button>
               </div>
-            ) : (
-              /* 双栏对照视图 */
-              <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
-                <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-1.5 shrink-0">
-                  <input
-                    type="text"
-                    value={comparisonSearchKeyword}
-                    onChange={(e) => setComparisonSearchKeyword(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        jumpComparisonMatch(e.shiftKey ? -1 : 1);
-                      }
-                    }}
-                    placeholder="搜索对比内容"
-                    className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-gray-200 rounded outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  />
-                  <span className={`text-[11px] w-14 text-center ${comparisonSearchKeyword && comparisonMatchRows.length === 0 ? 'text-red-500' : 'text-gray-500'}`}>
-                    {comparisonSearchKeyword ? `${comparisonMatchRows.length === 0 ? 0 : comparisonMatchIndex + 1}/${comparisonMatchRows.length}` : '--/--'}
-                  </span>
-                  <button
-                    onClick={() => jumpComparisonMatch(-1)}
-                    disabled={comparisonMatchRows.length === 0}
-                    className="px-2 py-1.5 text-xs text-gray-700 border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors"
-                  >
-                    上一个
-                  </button>
-                  <button
-                    onClick={() => jumpComparisonMatch(1)}
-                    disabled={comparisonMatchRows.length === 0}
-                    className="px-2 py-1.5 text-xs text-gray-700 border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition-colors"
-                  >
-                    下一个
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 border-b border-gray-100">
-                  <div className="border-r border-gray-100">
-                    <div className="px-3 py-2 flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-gray-700">转换前</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-gray-400">{originalText ? `${originalText.split('\n').filter(Boolean).length} 行` : '0 行'}</span>
-                        <button
-                          onClick={onCopyOriginal}
-                          className={`px-2 py-1 text-[11px] rounded transition-colors ${
-                            copySuccess ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-100 border border-gray-200'
-                          }`}
-                        >
-                          {copySuccess ? '已复制' : '复制'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="px-3 py-2 flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-gray-700">转换后</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-gray-400">{convertedText ? `${convertedText.split('\n').filter(Boolean).length} 行` : '0 行'}</span>
-                        <button
-                          onClick={onCopyConverted}
-                          className="px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-100 border border-gray-200 rounded transition-colors"
-                        >
-                          复制
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <AlignedTextGrid
-                  rows={alignedRows}
-                  scrollRef={leftScrollRef}
-                  activeRowIndex={activeComparisonRowIndex}
-                  onOriginalRowChange={handleOriginalRowChange}
-                  onConvertedRowChange={handleConvertedRowChange}
-                />
-              </div>
-            )}
+            </div>
+            <div
+              ref={leftScrollRef}
+              data-editor-scroll-container="true"
+              className="min-h-0 flex-1 overflow-hidden p-3"
+            >
+              <EditorPane
+                value={currentText}
+                placeholder={activeTab === 'original' ? '在此编辑转换前原文…' : '在此编辑转换后模板…'}
+                onEditorChange={activeTab === 'original' ? handleOriginalEditorChange : handleConvertedEditorChange}
+                editorRef={currentEditorRef}
+                mode={activeTab}
+                plainBackground
+                heightClassName="h-full"
+                wrapLongLines={activeTab === 'original'}
+                searchKeyword={searchKeyword}
+                activeMatchIndex={searchMatches.length > 0 ? searchMatchIndex : -1}
+              />
+            </div>
           </div>
         </>
       )}

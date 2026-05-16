@@ -1,7 +1,7 @@
 import { FileCheck, Image as ImageIcon, LayoutGrid, MessageCircle, ScanText } from 'lucide-react';
 import React from 'react';
 
-export type AppTab = 'extract' | 'gallery' | 'proofread' | 'proofread2' | 'aichat' | 'baimiao';
+export type AppTab = 'extract' | 'gallery' | 'proofread2' | 'aichat' | 'baimiao';
 
 type AppHeaderProps = {
   activeTab: AppTab;
@@ -14,7 +14,6 @@ const TAB_CONFIG: Array<{ tab: AppTab; label: string; icon: React.ReactElement }
   { tab: 'extract',    label: '字幕截取', icon: <ImageIcon className="w-4 h-4" /> },
   { tab: 'gallery',    label: '查看图片', icon: <LayoutGrid className="w-4 h-4" /> },
   { tab: 'aichat',     label: 'AI处理',   icon: <MessageCircle className="w-4 h-4" /> },
-  { tab: 'proofread',  label: '文本转换', icon: <FileCheck className="w-4 h-4" /> },
   { tab: 'proofread2', label: '文本校对', icon: <FileCheck className="w-4 h-4" /> },
   { tab: 'baimiao',    label: '白描ocr',  icon: <ScanText className="w-4 h-4" /> },
 ];

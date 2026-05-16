@@ -7,13 +7,22 @@ import { handleAiProxyRequest } from "./routes/ai-proxy-routes.js";
 import { sendError, serveStaticFile } from "./utils/http.js";
 
 const isViteDev = process.env.VITE_DEV === "1";
+const CORS_ALLOWED_HEADERS = [
+  "content-type",
+  "authorization",
+  "x-ai-target-url",
+  "x-ai-api-key",
+  "x-file-name",
+  "x-file-size",
+  "x-file-last-modified"
+].join(", ");
 
 // ── HTTP 服务器 ────────────────────────────────────────────
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   response.setHeader("access-control-allow-origin", "*");
-  response.setHeader("access-control-allow-headers", "content-type, authorization, x-ai-target-url, x-ai-api-key");
+  response.setHeader("access-control-allow-headers", CORS_ALLOWED_HEADERS);
   response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
 
   if (request.method === "OPTIONS") {

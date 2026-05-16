@@ -15,6 +15,8 @@ interface CompactGalleryProps {
   sharedVideoRef?: React.MutableRefObject<HTMLVideoElement | null>;
   roi?: ROI | null;
   onCaptureFrame?: (frame: ExtractedFrame) => void;
+  selectedReferenceFrameId?: string | null;
+  onSelectReferenceFrame?: (frame: ExtractedFrame) => void;
 }
 
 const CompactGallery: React.FC<CompactGalleryProps> = ({
@@ -25,7 +27,9 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
   videoSrc,
   sharedVideoRef,
   roi,
-  onCaptureFrame
+  onCaptureFrame,
+  selectedReferenceFrameId,
+  onSelectReferenceFrame
 }) => {
   const [panelTab, setPanelTab] = useState<'images' | 'video'>('images');
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -380,18 +384,18 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
       </div>
 
       {/* 视频 Tab */}
-      <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col bg-black scrollbar-thin ${panelTab === 'video' ? '' : 'hidden'}`}>
+      <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col bg-gray-50 scrollbar-thin ${panelTab === 'video' ? '' : 'hidden'}`}>
           {activeVideo && videoSrc ? (
             <>
               <video
                 ref={videoRef}
                 src={videoSrc}
                 controls
-                className="w-full object-contain shrink-0 max-h-[55vh]"
+                className="w-full object-contain shrink-0 max-h-[55vh] bg-gray-900"
               />
               {/* 截取按钮 */}
               {onCaptureFrame && (
-                <div className="shrink-0 bg-gray-900 px-2 py-1.5 flex justify-end border-b border-gray-700">
+                <div className="shrink-0 bg-white px-2 py-1.5 flex justify-end">
                   <button
                     onClick={handleCaptureFrame}
                     className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded transition-colors"
@@ -402,19 +406,16 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
                 </div>
               )}
               {cropRoi && (
-                <div className="shrink-0 bg-gray-900 border-t border-gray-700 p-2">
-                  <div className="text-[10px] text-gray-400 mb-1 px-1">
-                    裁切预览 · {cropRoi.name}
-                  </div>
+                <div className="shrink-0 bg-white p-2">
                   <canvas
                     ref={cropCanvasRef}
-                    className="w-full rounded block"
+                    className="w-full rounded block border border-gray-200"
                   />
                 </div>
               )}
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+            <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
               <div className="text-center">
                 <Video className="w-10 h-10 mx-auto mb-2 opacity-30" />
                 <p>请先上传视频</p>
@@ -489,6 +490,7 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
       <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto space-y-1.5 px-2 pb-2 scrollbar-thin">
         {currentItems.map((frame) => {
           const isSelected = selectedIds.has(frame.id);
+          const isReferenceFrame = selectedReferenceFrameId === frame.id;
           
           return (
             <div 
@@ -500,16 +502,32 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
                   : 'border-gray-200 bg-white hover:border-indigo-300'
               }`}
             >
-              <div className="relative bg-black overflow-hidden flex items-center justify-center min-h-[80px]">
+              <div className="relative bg-gray-100 overflow-hidden flex items-center justify-center min-h-[80px]">
                 <img 
                   src={frame.url} 
                   alt={frame.filename} 
                   className="w-full object-contain group-hover:scale-105 transition-transform duration-300 max-h-[200px]"
                 />
-                <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-10 transition-opacity" />
+                <div className="absolute inset-0 bg-gray-900 opacity-0 group-hover:opacity-5 transition-opacity" />
                 
                 {/* 悬浮按钮 */}
                 <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {onSelectReferenceFrame && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectReferenceFrame(frame);
+                      }}
+                      className={`px-2 py-1 backdrop-blur rounded-full text-[10px] font-medium shadow-sm transition-colors ${
+                        isReferenceFrame
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          : 'bg-white/80 text-emerald-700 hover:bg-white'
+                      }`}
+                      title="设为头像参考图"
+                    >
+                      {isReferenceFrame ? '参考中' : '设为参考'}
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -558,6 +576,11 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
                 {isSelected && (
                   <div className="absolute top-1 left-1 bg-indigo-600 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shadow-lg">
                     ✓
+                  </div>
+                )}
+                {isReferenceFrame && (
+                  <div className="absolute bottom-1 left-1 rounded-full bg-emerald-600/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg">
+                    头像参考
                   </div>
                 )}
               </div>

@@ -59,6 +59,17 @@ class DBConnectionPool {
 
 const dbPool = new DBConnectionPool();
 
+const hydrateExtractedFrame = (frame: ExtractedFrame): ExtractedFrame => {
+  if (!frame.blob) {
+    return frame;
+  }
+
+  return {
+    ...frame,
+    url: URL.createObjectURL(frame.blob),
+  };
+};
+
 const runTransaction = async <T>(
   storeNames: string[],
   mode: IDBTransactionMode,
@@ -108,7 +119,7 @@ export const loadExtractedFrames = async (): Promise<ExtractedFrame[]> => {
       (transaction) => transaction.objectStore(FRAMES_STORE).getAll(),
       []
     );
-    return result || [];
+    return (result || []).map(hydrateExtractedFrame);
   } catch (error) {
     handleError(error, undefined, { context: 'Failed to load extracted frames' });
     return [];

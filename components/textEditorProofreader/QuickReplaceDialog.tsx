@@ -201,7 +201,7 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
       <CenteredModal
         open={true}
         onClose={onClose}
-        title="🎭 一键替换人名头像"
+        title="🎭 智能头像"
         panelClassName="w-full max-w-2xl mx-4 flex max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         bodyClassName={null}
         footer={

@@ -89,7 +89,6 @@ export const useDeduplication = ({
             message: `去重${groupLabel}完成！已删除 ${deleteIndices.length} 张`,
             stage: 'deduplicating',
           });
-          await new Promise((resolve) => setTimeout(resolve, 1000));
           notifier.addToast(
             `${groupLabel}自动去重完成！已删除 ${deleteIndices.length} 张重复图片，保留 ${keepIndices.length} 张`,
             'success'
@@ -101,7 +100,6 @@ export const useDeduplication = ({
             message: `去重${groupLabel}完成 - 未发现重复`,
             stage: 'deduplicating',
           });
-          await new Promise((resolve) => setTimeout(resolve, 1000));
           notifier.addToast(`${groupLabel}未发现重复图片`, 'info');
         }
       } catch (error) {

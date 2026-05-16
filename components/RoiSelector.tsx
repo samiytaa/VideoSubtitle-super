@@ -539,9 +539,6 @@ const RoiSelector: React.FC<RoiSelectorProps> = ({
                       <RenderHandle pos="sw" cursor="sw-resize" />
                       <RenderHandle pos="s"  cursor="s-resize"  />
                       <RenderHandle pos="se" cursor="se-resize" />
-                      <div className="absolute -top-7 left-0 bg-red-600 text-white text-[10px] px-2 py-1 rounded font-bold shadow-lg pointer-events-none whitespace-nowrap">
-                        字幕提取选区 ({pixelCoords.w}x{pixelCoords.h}px)
-                      </div>
                     </div>
                   </div>
                 )}
