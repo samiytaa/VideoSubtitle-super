@@ -41,6 +41,8 @@ interface EditorModalsProps {
   sharedVideoRef?: React.MutableRefObject<HTMLVideoElement | null>;
   roi?: ROI | null;
   onCaptureFrame?: (frame: ExtractedFrame) => void;
+  selectedReferenceFrameId?: string | null;
+  onSelectReferenceFrame?: (frame: ExtractedFrame) => void;
 }
 
 const EditorModals: React.FC<EditorModalsProps> = (props) => {
@@ -52,7 +54,9 @@ const EditorModals: React.FC<EditorModalsProps> = (props) => {
     videoSrc: props.videoSrc,
     sharedVideoRef: props.sharedVideoRef,
     roi: props.roi,
-    onCaptureFrame: props.onCaptureFrame
+    onCaptureFrame: props.onCaptureFrame,
+    selectedReferenceFrameId: props.selectedReferenceFrameId,
+    onSelectReferenceFrame: props.onSelectReferenceFrame
   };
 
   return (
@@ -102,4 +106,3 @@ const EditorModals: React.FC<EditorModalsProps> = (props) => {
 };
 
 export default EditorModals;
-

@@ -1,4 +1,6 @@
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '');
+const AVATAR_ROUTE_SELECTION_KEY = 'avatarPicker_routeSelection';
+const EMPTY_AVATAR_ROUTE_SELECTION = '__EMPTY__';
 
 export const resolveBackendUrl = (path: string) => {
   if (!path.startsWith('/')) return path;
@@ -41,4 +43,22 @@ export const syncHashRoute = (path: string) => {
   if (window.location.hash !== targetHash) {
     window.location.hash = normalizedPath;
   }
+};
+
+export const consumeAvatarRouteSelection = () => {
+  const queuedSelection = sessionStorage.getItem(AVATAR_ROUTE_SELECTION_KEY);
+  if (queuedSelection === null) return null;
+
+  sessionStorage.removeItem(AVATAR_ROUTE_SELECTION_KEY);
+  return queuedSelection === EMPTY_AVATAR_ROUTE_SELECTION ? '' : queuedSelection;
+};
+
+export const navigateToAvatarRoute = (avatarName?: string | null) => {
+  const normalizedSelection = avatarName?.trim() ?? '';
+  sessionStorage.setItem(
+    AVATAR_ROUTE_SELECTION_KEY,
+    normalizedSelection ? normalizedSelection : EMPTY_AVATAR_ROUTE_SELECTION
+  );
+  syncHashRoute('/avatars');
+  window.dispatchEvent(new CustomEvent('avatar-route-selection-changed'));
 };

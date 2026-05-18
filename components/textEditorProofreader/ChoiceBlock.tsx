@@ -2,7 +2,7 @@ import React from 'react';
 import { getAvatarPath } from '../../utils/avatarMap';
 import AvatarPicker from '../AvatarPicker';
 import { ParsedBlock } from './types';
-import { getCharacterColor, parseEditableBlocksText, serializeBlocksText } from './textParserUtils';
+import { getCharacterColor, parseOriginalBlocksText, serializeBlocksOriginalText, serializeBlocksText } from './textParserUtils';
 import { ExtractedFrame, VideoFile, ROI } from '../../types';
 
 export interface ChoiceBlockProps {
@@ -47,6 +47,8 @@ export interface ChoiceBlockProps {
   sharedVideoRef?: React.MutableRefObject<HTMLVideoElement | null>;
   roi?: ROI | null;
   onCaptureFrame?: (frame: ExtractedFrame) => void;
+  selectedReferenceFrameId?: string | null;
+  onSelectReferenceFrame?: (frame: ExtractedFrame) => void;
 }
 
 const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
@@ -87,16 +89,20 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
   videoSrc,
   sharedVideoRef,
   roi,
-  onCaptureFrame
+  onCaptureFrame,
+  selectedReferenceFrameId,
+  onSelectReferenceFrame
 }) => {
   const isHeaderEditing = editingChoiceBlockIndex === index;
   const opts = isHeaderEditing ? editingChoiceOptions : (block.choiceOptions || []);
   const [rawEditingOptionIndex, setRawEditingOptionIndex] = React.useState<number | null>(null);
   const [rawEditingText, setRawEditingText] = React.useState('');
+  const [rawEditingConvertedText, setRawEditingConvertedText] = React.useState('');
 
   React.useEffect(() => {
     setRawEditingOptionIndex(null);
     setRawEditingText('');
+    setRawEditingConvertedText('');
   }, [index, block.choiceOptions, editingChoiceBlockIndex]);
 
   const applyOptionBlocksUpdate = (optIdx: number, nextBlocks: ParsedBlock[]) => {
@@ -106,13 +112,29 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
     if (isHeaderEditing) onSetEditingChoiceOptions(next);
   };
 
+  const rawEditingPreview = React.useMemo(() => {
+    if (!rawEditingText.trim()) {
+      return { text: rawEditingConvertedText, error: '' };
+    }
+    const parsed = parseOriginalBlocksText(rawEditingText);
+    if (parsed.error) {
+      return { text: rawEditingConvertedText, error: parsed.error };
+    }
+    return { text: serializeBlocksText(parsed.blocks), error: '' };
+  }, [rawEditingConvertedText, rawEditingText]);
+
   const startRawEditing = (optIdx: number, blocks: ParsedBlock[]) => {
+    const original = serializeBlocksOriginalText(blocks);
     setRawEditingOptionIndex(optIdx);
-    setRawEditingText(serializeBlocksText(blocks));
+    setRawEditingText(original.error ? '' : original.text);
+    setRawEditingConvertedText(serializeBlocksText(blocks));
+    if (original.error) {
+      showAlert(original.error, '转换前内容生成失败');
+    }
   };
 
   const saveRawEditing = (optIdx: number) => {
-    const parsed = parseEditableBlocksText(rawEditingText);
+    const parsed = parseOriginalBlocksText(rawEditingText);
     if (parsed.error) {
       showAlert(parsed.error, '原文解析失败');
       return;
@@ -120,6 +142,7 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
     applyOptionBlocksUpdate(optIdx, parsed.blocks);
     setRawEditingOptionIndex(null);
     setRawEditingText('');
+    setRawEditingConvertedText('');
   };
 
   const renderOptionBlocks = () =>
@@ -189,6 +212,7 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
                     onClick={() => {
                       setRawEditingOptionIndex(null);
                       setRawEditingText('');
+                      setRawEditingConvertedText('');
                     }}
                     className="px-2 py-0.5 bg-gray-500 text-white rounded text-xs hover:bg-gray-600"
                   >取消</button>
@@ -201,14 +225,28 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
               )}
             </div>
             {rawEditingOptionIndex === optIdx && (
-              <div className="space-y-1">
-                <textarea
-                  value={rawEditingText}
-                  onChange={(e) => setRawEditingText(e.target.value)}
-                  className="w-full min-h-[120px] px-2 py-1.5 border border-amber-300 rounded text-xs font-mono resize-vertical bg-white text-gray-900"
-                  placeholder="直接编辑该选项对应的模板原文，例如：{{对话|角色|内容}}"
-                />
-                <div className="text-[11px] text-gray-500">{'支持直接粘贴 {{旁白}}、{{对话}}、{{分歧}}、{{嵌套分歧}} 模板。'}</div>
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-amber-700">转换前原文</div>
+                  <textarea
+                    value={rawEditingText}
+                    onChange={(e) => setRawEditingText(e.target.value)}
+                    className="w-full min-h-[120px] px-2 py-1.5 border border-amber-300 rounded text-xs font-mono resize-vertical bg-white text-gray-900"
+                    placeholder="直接编辑该选项对应的转换前原文"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-gray-600">转换后模板</div>
+                  <textarea
+                    value={rawEditingPreview.text}
+                    readOnly
+                    className="w-full min-h-[120px] px-2 py-1.5 border border-gray-200 rounded text-xs font-mono resize-vertical bg-gray-50 text-gray-600"
+                    placeholder="这里会显示对应的转换后模板"
+                  />
+                </div>
+                <div className={`text-[11px] md:col-span-2 ${rawEditingPreview.error ? 'text-amber-600' : 'text-gray-500'}`}>
+                  {rawEditingPreview.error || '左侧编辑转换前原文，右侧用于对照转换后的模板内容。'}
+                </div>
               </div>
             )}
             {rawEditingOptionIndex !== optIdx && opt.blocks.map((sub, subIdx) => {
@@ -337,6 +375,8 @@ const ChoiceBlock: React.FC<ChoiceBlockProps> = ({
                               sharedVideoRef={sharedVideoRef}
                               roi={roi}
                               onCaptureFrame={onCaptureFrame}
+                              selectedReferenceFrameId={selectedReferenceFrameId}
+                              onSelectReferenceFrame={onSelectReferenceFrame}
                             />
                           )}
                         </div>

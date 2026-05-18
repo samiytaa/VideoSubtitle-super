@@ -36,6 +36,8 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
   const animFrameRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0); // 记忆最后的播放时间点
+  const frameItemRefs = useRef(new Map<string, HTMLDivElement>());
+  const hasAlignedInitialReferenceRef = useRef(false);
 
   // 截取当前帧（按 roi 裁切）
   const handleCaptureFrame = () => {
@@ -226,6 +228,11 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
 
   const currentItems = paginate(filteredFrames);
 
+  const referenceFrame = React.useMemo(
+    () => (selectedReferenceFrameId ? frames.find((frame) => frame.id === selectedReferenceFrameId) ?? null : null),
+    [frames, selectedReferenceFrameId]
+  );
+
   const selectedCountInView = React.useMemo(
     () => filteredFrames.reduce((count, frame) => count + (selectedIds.has(frame.id) ? 1 : 0), 0),
     [filteredFrames, selectedIds]
@@ -283,6 +290,57 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
     }
     previousPageRef.current = currentPage;
   }, [currentPage]);
+
+  useEffect(() => {
+    if (hasAlignedInitialReferenceRef.current) return;
+    if (!referenceFrame) {
+      hasAlignedInitialReferenceRef.current = true;
+      return;
+    }
+
+    if (panelTab !== 'images') {
+      setPanelTab('images');
+    }
+
+    const targetGroup = referenceFrame.group === 'group1' || referenceFrame.group === 'group2'
+      ? referenceFrame.group
+      : 'all';
+
+    if (selectedGroup !== 'all' && selectedGroup !== targetGroup) {
+      setSelectedGroup(targetGroup);
+      return;
+    }
+
+    const targetFilteredFrames = filteredFrames;
+    const targetIndex = targetFilteredFrames.findIndex((frame) => frame.id === referenceFrame.id);
+    if (targetIndex === -1) {
+      hasAlignedInitialReferenceRef.current = true;
+      return;
+    }
+
+    const targetPage = Math.floor(targetIndex / itemsPerPage) + 1;
+    if (currentPage !== targetPage) {
+      setCurrentPage(targetPage);
+      return;
+    }
+
+    hasAlignedInitialReferenceRef.current = true;
+  }, [currentPage, filteredFrames, itemsPerPage, panelTab, referenceFrame, selectedGroup, setCurrentPage]);
+
+  useEffect(() => {
+    if (!selectedReferenceFrameId || panelTab !== 'images') return;
+    const targetItem = currentItems.find((frame) => frame.id === selectedReferenceFrameId);
+    if (!targetItem) return;
+
+    const node = frameItemRefs.current.get(selectedReferenceFrameId);
+    if (!node) return;
+
+    const timer = window.setTimeout(() => {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+
+    return () => window.clearTimeout(timer);
+  }, [currentItems, panelTab, selectedReferenceFrameId]);
 
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
@@ -495,6 +553,13 @@ const CompactGallery: React.FC<CompactGalleryProps> = ({
           return (
             <div 
               key={frame.id}
+              ref={(node) => {
+                if (node) {
+                  frameItemRefs.current.set(frame.id, node);
+                } else {
+                  frameItemRefs.current.delete(frame.id);
+                }
+              }}
               onClick={() => toggleSelect(frame.id)}
               className={`group relative border transition-all cursor-pointer overflow-hidden rounded-lg ${
                 isSelected 

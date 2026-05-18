@@ -24,6 +24,7 @@ import {
 const GalleryTab = React.lazy(() => import('./components/app/GalleryTab'));
 const ProofreadEditorTab = React.lazy(() => import('./components/app/ProofreadEditorTab'));
 const BaimiaoTab = React.lazy(() => import('./components/app/BaimiaoTab'));
+const AvatarTab = React.lazy(() => import('./components/app/AvatarTab'));
 const AiChatTab = React.lazy(() => import('./components/AiChatTab'));
 
 const tabLoadingFallback = (
@@ -151,7 +152,7 @@ const AppContent: React.FC = () => {
       <LoadingOverlay visible={!frameManagement.isDataLoaded} />
 
       <div
-        className={`${activeTab === 'proofread2' ? 'h-screen overflow-hidden' : 'min-h-screen'} flex flex-col bg-slate-50`}
+        className={`${activeTab === 'proofread2' || activeTab === 'avatars' ? 'h-screen overflow-hidden' : 'min-h-screen'} flex flex-col bg-slate-50`}
       >
         <AppHeader
           activeTab={activeTab}
@@ -251,6 +252,21 @@ const AppContent: React.FC = () => {
               />
             </Suspense>
           )}
+
+          {activeTab === 'avatars' && (
+            <Suspense fallback={tabLoadingFallback}>
+              <AvatarTab
+                extractedFrames={frameManagement.extractedFrames}
+                onDeleteFrames={frameManagement.handleDeleteFrames}
+                onJumpToTime={handleJumpToTime}
+                activeVideo={videoProcessing.activeVideo}
+                videoSrc={videoProcessing.videoSrc}
+                videoElementRef={videoElementRef}
+                roi={videoProcessing.roi}
+                onCaptureFrame={frameManagement.handleFrameCaptured}
+              />
+            </Suspense>
+          )}
         </main>
       </div>
     </>
@@ -259,6 +275,7 @@ const AppContent: React.FC = () => {
 
 function getMainLayoutClass(tab: string): string {
   if (tab === 'proofread2') return 'min-h-0 overflow-hidden';
+  if (tab === 'avatars') return 'min-h-0 overflow-hidden';
   if (tab === 'gallery') return 'px-0 py-0';
   return 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6';
 }

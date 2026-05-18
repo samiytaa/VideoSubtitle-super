@@ -3,6 +3,7 @@ import { getAvatarPath } from '../../../../utils/avatarMap';
 import { getCharacterColor } from '../../textParserUtils';
 import AvatarPicker from '../../../AvatarPicker';
 import { ExtractedFrame, VideoFile, ROI } from '../../../../types';
+import { navigateToAvatarRoute } from '../../../../utils/runtimeConfig';
 
 export interface SharedDialogueItemProps {
   // 数据
@@ -53,6 +54,8 @@ export interface SharedDialogueItemProps {
   sharedVideoRef?: React.MutableRefObject<HTMLVideoElement | null>;
   roi?: ROI | null;
   onCaptureFrame?: (frame: ExtractedFrame) => void;
+  selectedReferenceFrameId?: string | null;
+  onSelectReferenceFrame?: (frame: ExtractedFrame) => void;
   
   // ref
   itemRef?: (el: HTMLDivElement | null) => void;
@@ -93,9 +96,14 @@ export const SharedDialogueItem: React.FC<SharedDialogueItemProps> = ({
   sharedVideoRef,
   roi,
   onCaptureFrame,
+  selectedReferenceFrameId,
+  onSelectReferenceFrame,
   itemRef
 }) => {
   const characterColor = getCharacterColor(character, customColor);
+  const openAvatarPage = React.useCallback(() => {
+    navigateToAvatarRoute(editingAvatar);
+  }, [editingAvatar]);
 
   return (
     <div
@@ -129,8 +137,8 @@ export const SharedDialogueItem: React.FC<SharedDialogueItemProps> = ({
               {editingAvatar ? (
                 <div
                   className="w-[100px] h-[100px] border-2 border-gray-300 rounded-lg overflow-hidden bg-gray-50 cursor-pointer hover:border-blue-500 transition-colors"
-                  onClick={() => onSetShowAvatarPicker(true)}
-                  title="点击更换头像"
+                  onClick={openAvatarPage}
+                  title="点击进入头像页"
                 >
                   {(() => {
                     const avatarPath = getAvatarPath(editingAvatar);
@@ -141,8 +149,8 @@ export const SharedDialogueItem: React.FC<SharedDialogueItemProps> = ({
               ) : (
                 <div
                   className="w-[100px] h-[100px] border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center bg-gray-50 cursor-pointer hover:border-blue-500 transition-colors"
-                  onClick={() => onSetShowAvatarPicker(true)}
-                  title="点击选择头像"
+                  onClick={openAvatarPage}
+                  title="点击进入头像页"
                 >
                   <span className="text-gray-400 text-xs text-center px-2">未选择<br />头像</span>
                 </div>
@@ -151,6 +159,7 @@ export const SharedDialogueItem: React.FC<SharedDialogueItemProps> = ({
             <div className="flex-1 space-y-2">
               <div className="flex gap-2">
                 <button onClick={() => onSetShowAvatarPicker(true)} className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-medium hover:bg-blue-600 transition-colors whitespace-nowrap">选择头像</button>
+                <button onClick={openAvatarPage} className="px-3 py-1.5 bg-indigo-500 text-white rounded-lg text-xs font-medium hover:bg-indigo-600 transition-colors whitespace-nowrap">进入头像页</button>
                 <button onClick={() => onSetEditingAvatar('')} className="px-3 py-1.5 bg-gray-500 text-white rounded-lg text-xs font-medium hover:bg-gray-600 transition-colors whitespace-nowrap">清空头像</button>
               </div>
               <input
@@ -202,6 +211,8 @@ export const SharedDialogueItem: React.FC<SharedDialogueItemProps> = ({
               sharedVideoRef={sharedVideoRef}
               roi={roi}
               onCaptureFrame={onCaptureFrame}
+              selectedReferenceFrameId={selectedReferenceFrameId}
+              onSelectReferenceFrame={onSelectReferenceFrame}
             />
           )}
         </div>

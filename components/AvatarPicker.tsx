@@ -1,15 +1,22 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { avatarCategories, avatarMap, getAvatarPath, normalizeAvatarName } from '../utils/avatarMap';
-import { X, Search, Star, Clock, Grid2x2, ZoomIn, ZoomOut, RotateCcw, Image as ImageIcon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ChevronUp } from 'lucide-react';
-import CompactGallery from './CompactGallery';
+import { X, Search, Star, Clock, Grid2x2, ZoomIn, ZoomOut, RotateCcw, Image as ImageIcon } from 'lucide-react';
+import ProofreadImageGallery from './ProofreadImageGallery';
 import { ExtractedFrame, VideoFile, ROI } from '../types';
 import { handleError } from '../utils/errorHandler';
-import { generateAvatarReferenceImages } from '../utils/avatarReferenceCrop';
+import {
+  generateAvatarReferenceImagesFromLoadedImage,
+  loadAvatarReferenceImage,
+  LoadedAvatarReferenceImage,
+} from '../utils/avatarReferenceCrop';
+import { useSharedReferenceFrame } from '../hooks/useSharedReferenceFrame';
+import CollapsibleSidebar from './common/CollapsibleSidebar';
 
 interface AvatarPickerProps {
   onSelect: (avatarName: string) => void;
   onClose: () => void;
   currentAvatar?: string;
+  embedded?: boolean;
   // 校对图片相关props
   extractedFrames?: ExtractedFrame[];
   onDeleteFrames?: (ids: string[]) => void;
@@ -19,6 +26,8 @@ interface AvatarPickerProps {
   sharedVideoRef?: React.MutableRefObject<HTMLVideoElement | null>;
   roi?: ROI | null;
   onCaptureFrame?: (frame: ExtractedFrame) => void;
+  selectedReferenceFrameId?: string | null;
+  onSelectReferenceFrame?: (frame: ExtractedFrame) => void;
 }
 
 interface AvatarCategory {
@@ -50,7 +59,8 @@ const STORAGE_KEYS = {
   LAST_LEAF_SUBCATEGORY: 'avatarPicker_lastLeafSubcategory',
   LAST_AVATAR: 'avatarPicker_lastAvatar',
   RECENT_AVATARS: 'avatarPicker_recentAvatars',
-  FAVORITE_AVATARS: 'avatarPicker_favoriteAvatars'
+  FAVORITE_AVATARS: 'avatarPicker_favoriteAvatars',
+  ACTIVE_REFERENCE_SIDE: 'avatarPicker_activeReferenceSide'
 };
 
 const SPECIAL_CATEGORIES = ['全部', '最近使用', '我的收藏'] as const;
@@ -67,11 +77,129 @@ interface AvatarReferencePreview {
   right: string;
 }
 
+type ReferencePreviewSide = 'left' | 'right';
+
+interface ZoomableImageViewerProps {
+  src: string;
+  alt: string;
+  height?: number | string;
+}
+
+const UNIFIED_IMAGE_VIEWER_HEIGHT = 'min(58vh, 34rem)';
+
+const ZoomableImageViewer: React.FC<ZoomableImageViewerProps> = ({ src, alt, height = UNIFIED_IMAGE_VIEWER_HEIGHT }) => {
+  const [zoom, setZoom] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [hasError, setHasError] = useState(false);
+  const isPanning = useRef(false);
+  const panStart = useRef({ x: 0, y: 0 });
+  const panOffsetStart = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    setZoom(1);
+    setPanOffset({ x: 0, y: 0 });
+    setHasError(false);
+  }, [src]);
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setZoom((prev) => {
+      const next = prev * (e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      return Math.min(Math.max(next, 0.5), 8);
+    });
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (zoom <= 1) return;
+    e.preventDefault();
+    isPanning.current = true;
+    panStart.current = { x: e.clientX, y: e.clientY };
+    panOffsetStart.current = panOffset;
+  }, [panOffset, zoom]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isPanning.current) return;
+      setPanOffset({
+        x: panOffsetStart.current.x + (e.clientX - panStart.current.x),
+        y: panOffsetStart.current.y + (e.clientY - panStart.current.y),
+      });
+    };
+    const handleMouseUp = () => {
+      isPanning.current = false;
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  return (
+    <div
+      onWheel={handleWheel}
+      onMouseDown={handleMouseDown}
+      className="relative flex items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm"
+      style={{ height, cursor: zoom > 1 ? (isPanning.current ? 'grabbing' : 'grab') : 'default' }}
+    >
+      {!hasError ? (
+        <img
+          src={src}
+          alt={alt}
+          draggable={false}
+          className="max-w-full max-h-full object-contain select-none transition-transform duration-100"
+          style={{
+            transform: `scale(${zoom}) translate(${panOffset.x / zoom}px, ${panOffset.y / zoom}px)`,
+            transformOrigin: 'center center',
+          }}
+          onError={() => setHasError(true)}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center px-4 text-center text-xs text-gray-400">
+          图片加载失败
+        </div>
+      )}
+
+      <div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg border border-gray-200 bg-white/90 px-1.5 py-1 shadow-sm backdrop-blur-sm">
+        <button
+          onClick={() => setZoom((value) => Math.max(value / 1.3, 0.5))}
+          className="rounded p-0.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+          title="缩小"
+        >
+          <ZoomOut size={13} />
+        </button>
+        <span className="w-9 text-center text-xs tabular-nums text-gray-500">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          onClick={() => setZoom((value) => Math.min(value * 1.3, 8))}
+          className="rounded p-0.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+          title="放大"
+        >
+          <ZoomIn size={13} />
+        </button>
+        <div className="mx-0.5 h-3 w-px bg-gray-200" />
+        <button
+          onClick={() => {
+            setZoom(1);
+            setPanOffset({ x: 0, y: 0 });
+          }}
+          className="rounded p-0.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+          title="重置"
+        >
+          <RotateCcw size={13} />
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const AvatarPicker: React.FC<AvatarPickerProps> = ({ 
   onSelect, 
   onClose, 
   currentAvatar,
+  embedded = false,
   extractedFrames = [],
   onDeleteFrames,
   onJumpToTime,
@@ -79,8 +207,14 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   videoSrc,
   sharedVideoRef,
   roi,
-  onCaptureFrame
+  onCaptureFrame,
+  selectedReferenceFrameId: controlledReferenceFrameId,
+  onSelectReferenceFrame: controlledOnSelectReferenceFrame
 }) => {
+  const {
+    selectedReferenceFrameId: sharedReferenceFrameId,
+    setSelectedReferenceFrameId: setSharedReferenceFrameId,
+  } = useSharedReferenceFrame();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string>('');
   const [selectedLeafSubcategory, setSelectedLeafSubcategory] = useState<string>('');
@@ -91,16 +225,27 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   // 右侧预览栏当前悬停/点击的头像
   const [hoveredAvatar, setHoveredAvatar] = useState<string | null>(currentAvatar ?? null);
   const avatarItemRefs = useRef(new Map<string, HTMLDivElement>());
-  const [selectedReferenceFrameId, setSelectedReferenceFrameId] = useState<string | null>(null);
+  const selectedReferenceFrameId = controlledReferenceFrameId ?? sharedReferenceFrameId;
   const [avatarReferencePreview, setAvatarReferencePreview] = useState<AvatarReferencePreview | null>(null);
   const [isGeneratingReferencePreview, setIsGeneratingReferencePreview] = useState(false);
   const [referencePreviewError, setReferencePreviewError] = useState<string | null>(null);
+  const loadedReferenceImageRef = useRef<LoadedAvatarReferenceImage | null>(null);
+  const [activeReferenceSide, setActiveReferenceSide] = useState<ReferencePreviewSide>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.ACTIVE_REFERENCE_SIDE);
+    return saved === 'right' ? 'right' : 'left';
+  });
   
-  // 校对图片折叠状态（现在在中间区域下方）
+  // 右侧校对图片折叠状态
   const [isProofreadCollapsed, setIsProofreadCollapsed] = useState(() => {
     const saved = localStorage.getItem('avatarPicker_proofreadCollapsed');
     return saved !== null ? saved === 'true' : false;
   });
+  const [isReferencePanelCollapsed, setIsReferencePanelCollapsed] = useState(() => {
+    const saved = localStorage.getItem('avatarPicker_referencePanelCollapsed');
+    return saved !== null ? saved === 'true' : false;
+  });
+  const [referencePanelWidth, setReferencePanelWidth] = useState(280);
+  const MIN_REFERENCE_PANEL_WIDTH = 220;
   const [proofreadHeight, setProofreadHeight] = useState(280);
   const MIN_PROOFREAD_HEIGHT = 150;
   const MAX_PROOFREAD_HEIGHT = 500;
@@ -111,14 +256,15 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
     const saved = localStorage.getItem('avatarPicker_categoryCollapsed');
     return saved !== null ? saved === 'true' : false;
   });
-  const COLLAPSED_CATEGORY_WIDTH = 48;
+  const COLLAPSED_SIDEBAR_WIDTH = 40;
+  const COLLAPSED_CATEGORY_WIDTH = COLLAPSED_SIDEBAR_WIDTH;
 
   // 右侧预览栏折叠状态
   const [isPreviewCollapsed, setIsPreviewCollapsed] = useState(() => {
     const saved = localStorage.getItem('avatarPicker_previewCollapsed');
     return saved !== null ? saved === 'true' : false;
   });
-  const COLLAPSED_PREVIEW_WIDTH = 48;
+  const COLLAPSED_PREVIEW_WIDTH = COLLAPSED_SIDEBAR_WIDTH;
 
   const [selectedCategory, setSelectedCategory] = useState<string>(() => {
     return localStorage.getItem(STORAGE_KEYS.LAST_CATEGORY) || '全部';
@@ -159,16 +305,25 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   }, [isCategoryCollapsed]);
 
   useEffect(() => {
+    localStorage.setItem('avatarPicker_referencePanelCollapsed', String(isReferencePanelCollapsed));
+  }, [isReferencePanelCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.ACTIVE_REFERENCE_SIDE, activeReferenceSide);
+  }, [activeReferenceSide]);
+
+  useEffect(() => {
     localStorage.setItem('avatarPicker_previewCollapsed', String(isPreviewCollapsed));
   }, [isPreviewCollapsed]);
 
   useEffect(() => {
     if (!selectedReferenceFrameId) return;
     if (extractedFrames.some((frame) => frame.id === selectedReferenceFrameId)) return;
-    setSelectedReferenceFrameId(null);
+    if (!controlledReferenceFrameId) setSharedReferenceFrameId(null);
     setAvatarReferencePreview(null);
     setReferencePreviewError(null);
-  }, [extractedFrames, selectedReferenceFrameId]);
+    loadedReferenceImageRef.current = null;
+  }, [controlledReferenceFrameId, extractedFrames, selectedReferenceFrameId, setSharedReferenceFrameId]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.LAST_CATEGORY, selectedCategory);
@@ -371,9 +526,13 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   );
 
   const handleSelectReferenceFrame = useCallback((frame: ExtractedFrame) => {
-    setSelectedReferenceFrameId(frame.id);
+    if (controlledOnSelectReferenceFrame) {
+      controlledOnSelectReferenceFrame(frame);
+    } else {
+      setSharedReferenceFrameId(frame.id);
+    }
     setReferencePreviewError(null);
-  }, []);
+  }, [controlledOnSelectReferenceFrame, setSharedReferenceFrameId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -382,15 +541,18 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
       setAvatarReferencePreview(null);
       setReferencePreviewError(null);
       setIsGeneratingReferencePreview(false);
+      loadedReferenceImageRef.current = null;
       return;
     }
 
     setIsGeneratingReferencePreview(true);
     setReferencePreviewError(null);
 
-    generateAvatarReferenceImages(selectedReferenceFrame.url)
-      .then((preview) => {
+    loadAvatarReferenceImage(selectedReferenceFrame.url)
+      .then((loadedImage) => {
         if (cancelled) return;
+        loadedReferenceImageRef.current = loadedImage;
+        const preview = generateAvatarReferenceImagesFromLoadedImage(loadedImage);
         setAvatarReferencePreview({
           frameId: selectedReferenceFrame.id,
           frameUrl: selectedReferenceFrame.url,
@@ -401,6 +563,7 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
       .catch((error) => {
         if (cancelled) return;
         setAvatarReferencePreview(null);
+        loadedReferenceImageRef.current = null;
         setReferencePreviewError(error instanceof Error ? error.message : '头像参考图生成失败');
         handleError(error, undefined, { context: 'Failed to generate avatar reference preview' });
       })
@@ -415,7 +578,6 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
     };
   }, [selectedReferenceFrame]);
 
-  // 校对图片拖拽（现在是垂直拖拽）
   const isResizingProofread = useRef(false);
   const proofreadResizeStartY = useRef(0);
   const proofreadResizeStartHeight = useRef(0);
@@ -430,19 +592,16 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (isResizingProofread.current) {
-        // 向上拖：clientY 减小 → 高度增大
-        const delta = proofreadResizeStartY.current - e.clientY;
-        const newHeight = Math.min(Math.max(proofreadResizeStartHeight.current + delta, MIN_PROOFREAD_HEIGHT), MAX_PROOFREAD_HEIGHT);
-        setProofreadHeight(newHeight);
-      }
+      if (!isResizingProofread.current) return;
+      const delta = proofreadResizeStartY.current - e.clientY;
+      const newHeight = Math.min(Math.max(proofreadResizeStartHeight.current + delta, MIN_PROOFREAD_HEIGHT), MAX_PROOFREAD_HEIGHT);
+      setProofreadHeight(newHeight);
     };
     const handleMouseUp = () => {
-      if (isResizingProofread.current) {
-        isResizingProofread.current = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
+      if (!isResizingProofread.current) return;
+      isResizingProofread.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
@@ -458,6 +617,9 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
   const isResizingPreview = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
+  const isResizingReference = useRef(false);
+  const referenceResizeStartX = useRef(0);
+  const referenceResizeStartWidth = useRef(0);
   const mainBodyRef = useRef<HTMLDivElement>(null);
 
   const handlePreviewResizeMouseDown = useCallback((e: React.MouseEvent) => {
@@ -468,17 +630,36 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
     resizeStartWidth.current = previewWidth;
   }, [isPreviewCollapsed, previewWidth]);
 
+  const handleReferenceResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    if (isReferencePanelCollapsed) return;
+    e.preventDefault();
+    isResizingReference.current = true;
+    referenceResizeStartX.current = e.clientX;
+    referenceResizeStartWidth.current = referencePanelWidth;
+  }, [isReferencePanelCollapsed, referencePanelWidth]);
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizingPreview.current) return;
-      // 向左拖：clientX 减小 → 宽度增大
-      const delta = resizeStartX.current - e.clientX;
       const bodyWidth = mainBodyRef.current?.clientWidth ?? window.innerWidth;
-      const maxWidth = bodyWidth - 400; // 保留左侧分类栏+网格最小空间
-      const newWidth = Math.min(Math.max(resizeStartWidth.current + delta, MIN_PREVIEW_WIDTH), maxWidth);
-      setPreviewWidth(newWidth);
+      if (isResizingReference.current) {
+        const delta = referenceResizeStartX.current - e.clientX;
+        const maxWidth = bodyWidth - 420;
+        const newWidth = Math.min(Math.max(referenceResizeStartWidth.current + delta, MIN_REFERENCE_PANEL_WIDTH), maxWidth);
+        setReferencePanelWidth(newWidth);
+      }
+      if (isResizingPreview.current) {
+        const delta = resizeStartX.current - e.clientX;
+        const maxWidth = bodyWidth - 420;
+        const newWidth = Math.min(Math.max(resizeStartWidth.current + delta, MIN_PREVIEW_WIDTH), maxWidth);
+        setPreviewWidth(newWidth);
+      }
     };
     const handleMouseUp = () => {
+      if (isResizingReference.current) {
+        isResizingReference.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
       if (isResizingPreview.current) {
         isResizingPreview.current = false;
         document.body.style.cursor = '';
@@ -493,57 +674,13 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
     };
   }, []);
 
-  // 放大镜
-  const [zoom, setZoom] = useState(1);
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const isPanning = useRef(false);
-  const panStart = useRef({ x: 0, y: 0 });
-  const panOffsetStart = useRef({ x: 0, y: 0 });
-  const imgContainerRef = useRef<HTMLDivElement>(null);
-
-  // 切换头像时重置缩放
-  useEffect(() => {
-    setZoom(1);
-    setPanOffset({ x: 0, y: 0 });
-  }, [hoveredAvatar]);
-
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    setZoom(prev => {
-      const next = prev * (e.deltaY < 0 ? 1.15 : 1 / 1.15);
-      return Math.min(Math.max(next, 0.5), 8);
-    });
-  }, []);
-
-  const handleImgMouseDown = useCallback((e: React.MouseEvent) => {
-    if (zoom <= 1) return;
-    e.preventDefault();
-    isPanning.current = true;
-    panStart.current = { x: e.clientX, y: e.clientY };
-    panOffsetStart.current = panOffset;
-  }, [zoom, panOffset]);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isPanning.current) return;
-      setPanOffset({
-        x: panOffsetStart.current.x + (e.clientX - panStart.current.x),
-        y: panOffsetStart.current.y + (e.clientY - panStart.current.y),
-      });
-    };
-    const handleMouseUp = () => { isPanning.current = false; };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
+  const currentReferenceImage = avatarReferencePreview ? avatarReferencePreview[activeReferenceSide] : null;
+  const currentReferenceLabel = activeReferenceSide === 'left' ? '左侧头像' : '右侧头像';
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={onClose}
+      className={embedded ? 'flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white' : 'fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm'}
+      onClick={embedded ? undefined : onClose}
     >
       <div
         className="bg-white w-full h-full flex flex-col overflow-hidden"
@@ -598,55 +735,36 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
               剧情NPC
             </button>
           </div>
-          <button
-            onClick={onClose}
-            className="ml-auto p-1.5 rounded-lg bg-red-50 text-red-400 hover:bg-red-500 hover:text-white border border-red-200 hover:border-red-500 transition-all shrink-0"
-            aria-label="关闭"
-          >
-            <X size={16} />
-          </button>
+          {!embedded && (
+            <button
+              onClick={onClose}
+              className="ml-auto p-1.5 rounded-lg bg-red-50 text-red-400 hover:bg-red-500 hover:text-white border border-red-200 hover:border-red-500 transition-all shrink-0"
+              aria-label="关闭"
+            >
+              <X size={16} />
+            </button>
+          )}
         </div>
 
         {/* 主体 */}
         <div ref={mainBodyRef} className="flex flex-1 overflow-hidden">
 
           {/* 左侧分类侧边栏 */}
-          <div 
-            className="border-r border-gray-200 bg-gray-50 shrink-0 flex flex-col relative transition-all duration-300"
-            style={{ width: isCategoryCollapsed ? COLLAPSED_CATEGORY_WIDTH : 208 }}
+          <CollapsibleSidebar
+            side="left"
+            title="分类"
+            collapsed={isCategoryCollapsed}
+            onExpand={() => setIsCategoryCollapsed(false)}
+            onCollapse={() => setIsCategoryCollapsed(true)}
+            expandedWidth={208}
+            collapsedWidth={COLLAPSED_CATEGORY_WIDTH}
+            className="bg-gray-50"
+            bodyClassName="flex-1 overflow-y-auto scrollbar-thin"
+            collapsedButtonClassName="bg-blue-600 text-white hover:bg-blue-700"
+            collapsedLabelClassName="text-blue-600"
+            expandTitle="展开分类"
+            collapseTitle="折叠分类"
           >
-            {isCategoryCollapsed ? (
-              // 折叠状态
-              <div className="h-full flex flex-col items-center justify-start pt-6 px-2">
-                <button
-                  onClick={() => setIsCategoryCollapsed(false)}
-                  className="p-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                  title="展开分类"
-                >
-                  <PanelLeftOpen className="w-4 h-4" />
-                </button>
-                <div className="[writing-mode:vertical-rl] text-xs text-gray-500 mt-3">
-                  分类
-                </div>
-              </div>
-            ) : (
-              // 展开状态
-              <>
-                {/* 标题栏 */}
-                <div className="px-4 py-2.5 border-b border-gray-200 flex items-center gap-2">
-                  <span className="text-xs font-medium text-gray-700 shrink-0">分类</span>
-                  <div className="ml-auto" />
-                  <button
-                    onClick={() => setIsCategoryCollapsed(true)}
-                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors shrink-0"
-                    title="折叠面板"
-                  >
-                    <PanelLeftClose className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* 分类列表 */}
-                <div className="flex-1 overflow-y-auto scrollbar-thin">
                   {[ 
                     { label: '全部', count: Object.keys(avatarMap).length, key: '全部', icon: <Grid2x2 size={14} className="shrink-0" /> },
                     { label: '最近使用', count: recentAvatars.length, key: '最近使用', icon: <Clock size={14} className="shrink-0" /> },
@@ -748,12 +866,8 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                       )}
                     </div>
                   ))}
-                </div>
-              </>
-            )}
-          </div>
+          </CollapsibleSidebar>
 
-          {/* 中间区域：头像网格 + 校对图片 */}
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
               {filteredAvatars.length === 0 ? (
@@ -814,15 +928,16 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
               )}
             </div>
 
-            <div className="relative shrink-0 border-t border-gray-200 bg-white transition-all duration-300" style={{ height: isProofreadCollapsed ? COLLAPSED_PROOFREAD_HEIGHT : proofreadHeight + COLLAPSED_PROOFREAD_HEIGHT }}>
-              {/* 折叠/展开按钮 - 固定在顶部 */}
+            <div
+              className="relative shrink-0 border-t border-gray-200 bg-white transition-all duration-300"
+              style={{ height: isProofreadCollapsed ? COLLAPSED_PROOFREAD_HEIGHT : proofreadHeight + COLLAPSED_PROOFREAD_HEIGHT }}
+            >
               <div className="relative h-10 px-3 py-2 flex items-center justify-between gap-3 shrink-0 bg-white border-b border-gray-200">
                 <button
-                  onClick={() => setIsProofreadCollapsed((v) => !v)}
+                  onClick={() => setIsProofreadCollapsed((value) => !value)}
                   className="flex items-center gap-2 min-w-0 hover:bg-gray-50 px-2 py-1 rounded transition-colors"
                   title={isProofreadCollapsed ? '展开校对图片' : '收起校对图片'}
                 >
-                  <ChevronUp className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isProofreadCollapsed ? 'rotate-180' : 'rotate-0'}`} />
                   <ImageIcon size={13} className={isProofreadCollapsed ? 'text-gray-400' : 'text-indigo-400'} />
                   <span className={`text-xs tracking-widest ${isProofreadCollapsed ? 'text-gray-400' : 'text-indigo-500 font-medium'}`}>
                     校对图片
@@ -830,7 +945,6 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                 </button>
               </div>
 
-              {/* 可展开的内容区域 */}
               {!isProofreadCollapsed && (
                 <div className="relative bg-white" style={{ height: proofreadHeight }}>
                   <div
@@ -841,9 +955,9 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
                     <div className="absolute inset-x-0 top-0 h-1 bg-transparent group-hover:bg-indigo-400 transition-colors" />
                   </div>
                   <div className="h-full overflow-hidden">
-                    <CompactGallery
-                      frames={extractedFrames}
-                      onDelete={onDeleteFrames}
+                    <ProofreadImageGallery
+                      extractedFrames={extractedFrames}
+                      onDeleteFrames={onDeleteFrames}
                       onJumpToTime={onJumpToTime}
                       activeVideo={activeVideo}
                       videoSrc={videoSrc}
@@ -859,202 +973,156 @@ const AvatarPicker: React.FC<AvatarPickerProps> = ({
             </div>
           </div>
 
-          <div
-            className="border-l border-gray-200 bg-gray-50 shrink-0 flex flex-col relative transition-all duration-300"
-            style={{ width: isPreviewCollapsed ? COLLAPSED_PREVIEW_WIDTH : previewWidth }}
-          >
-            {isPreviewCollapsed ? (
-              <div className="h-full flex flex-col items-center justify-start pt-6 px-2">
-                <button
-                  onClick={() => setIsPreviewCollapsed(false)}
-                  className="p-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-                  title="展开预览"
-                >
-                  <PanelRightOpen className="w-4 h-4" />
-                </button>
-                <div className="[writing-mode:vertical-rl] text-xs text-gray-500 mt-3">
-                  预览
-                </div>
+          <CollapsibleSidebar
+            side="right"
+            title="参考图片"
+            collapsed={isReferencePanelCollapsed}
+            onToggle={() => setIsReferencePanelCollapsed((value) => !value)}
+            expandedWidth={referencePanelWidth}
+            className="bg-gray-50"
+            bodyClassName="flex-1 overflow-y-auto"
+            collapsedWidth={COLLAPSED_SIDEBAR_WIDTH}
+            collapsedButtonClassName="bg-emerald-500 text-white hover:bg-emerald-600"
+            collapsedLabelClassName="text-emerald-600"
+            headerTitleClassName="truncate text-xs font-medium text-gray-500 uppercase tracking-wide"
+            resizeHandle={(
+              <div
+                onMouseDown={handleReferenceResizeMouseDown}
+                className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 group"
+                title="拖动调整宽度"
+              >
+                <div className="absolute inset-y-0 left-0 w-1 bg-transparent group-hover:bg-emerald-400 transition-colors" />
               </div>
-            ) : (
-              <>
-                <div
-                  onMouseDown={handlePreviewResizeMouseDown}
-                  className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 group"
-                  title="拖动调整宽度"
-                >
-                  <div className="absolute inset-y-0 left-0 w-1 bg-transparent group-hover:bg-blue-400 transition-colors" />
+            )}
+          >
+            <div className="space-y-3 p-4">
+              {!selectedReferenceFrame && (
+                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-400">
+                  在左侧校对图片栏里点“设为参考”，会自动裁出左右头像区域
                 </div>
+              )}
 
-                <div className="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">预览</span>
+              {selectedReferenceFrame && isGeneratingReferencePreview && (
+                <div className="rounded-lg border border-dashed border-emerald-200 bg-emerald-50 px-3 py-4 text-center text-xs text-emerald-600">
+                  正在生成左右头像参考图…
+                </div>
+              )}
+
+              {selectedReferenceFrame && referencePreviewError && (
+                <div className="rounded-lg border border-dashed border-red-200 bg-red-50 px-3 py-4 text-center text-xs text-red-500">
+                  {referencePreviewError}
+                </div>
+              )}
+
+              {selectedReferenceFrame && avatarReferencePreview && (
+                <div className="space-y-3">
+                  {currentReferenceImage ? (
+                    <ZoomableImageViewer
+                      src={currentReferenceImage}
+                      alt={`${currentReferenceLabel}参考`}
+                    />
+                  ) : (
+                    <div
+                      className="flex items-center justify-center rounded-xl border border-gray-200 bg-white px-4 text-xs text-gray-400 shadow-sm"
+                      style={{ height: UNIFIED_IMAGE_VIEWER_HEIGHT }}
+                    >
+                      暂无截取结果
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['left', 'right'] as const).map((side) => {
+                      const isActive = activeReferenceSide === side;
+                      return (
+                        <button
+                          key={side}
+                          type="button"
+                          onClick={() => setActiveReferenceSide(side)}
+                          className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                            isActive
+                              ? 'border-emerald-400 bg-emerald-50 text-emerald-700'
+                              : 'border-gray-200 bg-white text-gray-500 hover:border-emerald-200 hover:text-emerald-600'
+                          }`}
+                        >
+                          {side === 'left' ? '左侧' : '右侧'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CollapsibleSidebar>
+
+          <CollapsibleSidebar
+            side="right"
+            title="预览"
+            collapsed={isPreviewCollapsed}
+            onToggle={() => setIsPreviewCollapsed((value) => !value)}
+            expandedWidth={previewWidth}
+            collapsedWidth={COLLAPSED_PREVIEW_WIDTH}
+            className="bg-gray-50"
+            bodyClassName="flex-1 overflow-y-auto"
+            collapsedButtonClassName="bg-violet-600 text-white hover:bg-violet-700"
+            collapsedLabelClassName="text-violet-600"
+            headerTitleClassName="truncate text-xs font-medium text-gray-500 uppercase tracking-wide"
+            resizeHandle={(
+              <div
+                onMouseDown={handlePreviewResizeMouseDown}
+                className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 group"
+                title="拖动调整宽度"
+              >
+                <div className="absolute inset-y-0 left-0 w-1 bg-transparent group-hover:bg-blue-400 transition-colors" />
+              </div>
+            )}
+          >
+            {hoveredAvatar && previewPath ? (
+              <div className="flex flex-col gap-4 p-4">
+                <ZoomableImageViewer
+                  src={previewPath}
+                  alt={hoveredAvatar}
+                />
+
+                <div className="flex gap-2 w-full">
                   <button
-                    onClick={() => setIsPreviewCollapsed(true)}
-                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                    title="折叠面板"
+                    onClick={() => handleSelectAvatar(hoveredAvatar)}
+                    className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm ${
+                      isPreviewSelected
+                        ? 'bg-blue-100 text-blue-500 border border-blue-200 cursor-default'
+                        : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95 shadow-blue-200'
+                    }`}
+                    disabled={isPreviewSelected}
                   >
-                    <PanelRightClose className="w-4 h-4" />
+                    {isPreviewSelected ? '使用中' : '选择'}
+                  </button>
+                  <button
+                    onClick={() => toggleFavorite(hoveredAvatar)}
+                    className={`flex-1 py-2 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 ${
+                      isPreviewFavorite
+                        ? 'bg-amber-400 text-white border border-amber-400 hover:bg-amber-500 shadow-amber-200'
+                        : 'bg-white text-gray-500 border border-gray-200 hover:border-amber-300 hover:text-amber-500 hover:bg-amber-50'
+                    }`}
+                  >
+                    <Star size={13} fill={isPreviewFavorite ? 'currentColor' : 'none'} strokeWidth={2} />
+                    {isPreviewFavorite ? '已收藏' : '收藏'}
                   </button>
                 </div>
 
-                {hoveredAvatar && previewPath ? (
-                  <div className="flex flex-col gap-4 p-4 flex-1 overflow-y-auto">
-                    <div
-                      ref={imgContainerRef}
-                      onWheel={handleWheel}
-                      onMouseDown={handleImgMouseDown}
-                      className="w-full flex-1 flex items-center justify-center bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden relative"
-                      style={{ cursor: zoom > 1 ? (isPanning.current ? 'grabbing' : 'grab') : 'default' }}
-                    >
-                      <img
-                        src={previewPath}
-                        alt={hoveredAvatar}
-                        draggable={false}
-                        className="max-w-full max-h-full object-contain select-none transition-transform duration-100"
-                        style={{
-                          transform: `scale(${zoom}) translate(${panOffset.x / zoom}px, ${panOffset.y / zoom}px)`,
-                          transformOrigin: 'center center',
-                        }}
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                      />
-                      <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg px-1.5 py-1 shadow-sm">
-                        <button
-                          onClick={() => setZoom((z) => Math.max(z / 1.3, 0.5))}
-                          className="p-0.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors"
-                          title="缩小"
-                        >
-                          <ZoomOut size={13} />
-                        </button>
-                        <span className="text-xs text-gray-500 w-9 text-center tabular-nums">
-                          {Math.round(zoom * 100)}%
-                        </span>
-                        <button
-                          onClick={() => setZoom((z) => Math.min(z * 1.3, 8))}
-                          className="p-0.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors"
-                          title="放大"
-                        >
-                          <ZoomIn size={13} />
-                        </button>
-                        <div className="w-px h-3 bg-gray-200 mx-0.5" />
-                        <button
-                          onClick={() => {
-                            setZoom(1);
-                            setPanOffset({ x: 0, y: 0 });
-                          }}
-                          className="p-0.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors"
-                          title="重置"
-                        >
-                          <RotateCcw size={13} />
-                        </button>
-                      </div>
-                    </div>
-
-                    <p className="text-sm font-medium text-gray-800 text-center leading-snug break-all">
-                      {hoveredAvatar}
-                    </p>
-
-                    <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">头像参考</span>
-                        {selectedReferenceFrame && (
-                          <span className="text-[11px] text-emerald-600 truncate max-w-[120px]" title={selectedReferenceFrame.filename}>
-                            {selectedReferenceFrame.filename}
-                          </span>
-                        )}
-                      </div>
-
-                      {!selectedReferenceFrame && (
-                        <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-400">
-                          在下方校对图片里点“设为参考”，会自动裁出左右头像区域
-                        </div>
-                      )}
-
-                      {selectedReferenceFrame && isGeneratingReferencePreview && (
-                        <div className="rounded-lg border border-dashed border-emerald-200 bg-emerald-50 px-3 py-4 text-center text-xs text-emerald-600">
-                          正在生成左右头像参考图…
-                        </div>
-                      )}
-
-                      {selectedReferenceFrame && referencePreviewError && (
-                        <div className="rounded-lg border border-dashed border-red-200 bg-red-50 px-3 py-4 text-center text-xs text-red-500">
-                          {referencePreviewError}
-                        </div>
-                      )}
-
-                      {selectedReferenceFrame && avatarReferencePreview && (
-                        <div className="space-y-3">
-                          <div>
-                            <div className="mb-1 text-[11px] font-medium text-gray-500">原图</div>
-                            <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
-                              <img
-                                src={avatarReferencePreview.frameUrl}
-                                alt="校对参考图"
-                                className="block h-24 w-full object-contain"
-                              />
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>
-                              <div className="mb-1 text-[11px] font-medium text-gray-500">左侧头像</div>
-                              <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
-                                <img
-                                  src={avatarReferencePreview.left}
-                                  alt="左侧头像参考"
-                                  className="block aspect-[3/4] w-full object-cover"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <div className="mb-1 text-[11px] font-medium text-gray-500">右侧头像</div>
-                              <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
-                                <img
-                                  src={avatarReferencePreview.right}
-                                  alt="右侧头像参考"
-                                  className="block aspect-[3/4] w-full object-cover"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2 w-full">
-                      <button
-                        onClick={() => handleSelectAvatar(hoveredAvatar)}
-                        className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm ${
-                          isPreviewSelected
-                            ? 'bg-blue-100 text-blue-500 border border-blue-200 cursor-default'
-                            : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95 shadow-blue-200'
-                        }`}
-                        disabled={isPreviewSelected}
-                      >
-                        {isPreviewSelected ? '使用中' : '选择'}
-                      </button>
-                      <button
-                        onClick={() => toggleFavorite(hoveredAvatar)}
-                        className={`flex-1 py-2 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 ${
-                          isPreviewFavorite
-                            ? 'bg-amber-400 text-white border border-amber-400 hover:bg-amber-500 shadow-amber-200'
-                            : 'bg-white text-gray-500 border border-gray-200 hover:border-amber-300 hover:text-amber-500 hover:bg-amber-50'
-                        }`}
-                      >
-                        <Star size={13} fill={isPreviewFavorite ? 'currentColor' : 'none'} strokeWidth={2} />
-                        {isPreviewFavorite ? '已收藏' : '收藏'}
-                      </button>
-                    </div>
+                <p className="text-sm font-medium text-gray-800 text-center leading-snug break-all">
+                  {hoveredAvatar}
+                </p>
+              </div>
+            ) : (
+              <div className="p-4">
+                <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-gray-400 shadow-sm">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-200">
+                    <Grid2x2 size={24} className="text-gray-300" />
                   </div>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center gap-2 text-gray-400 p-4">
-                    <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center">
-                      <Grid2x2 size={24} className="text-gray-300" />
-                    </div>
-                    <p className="text-xs text-center">点击头像查看预览</p>
-                  </div>
-                )}
-              </>
+                  <p className="text-xs text-center">点击头像查看预览</p>
+                </div>
+              </div>
             )}
-          </div>
+          </CollapsibleSidebar>
 
         </div>
       </div>

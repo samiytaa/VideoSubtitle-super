@@ -2,7 +2,7 @@
 import { getAvatarPath } from '../../utils/avatarMap';
 import AvatarPicker from '../AvatarPicker';
 import { ParsedBlock } from './types';
-import { getCharacterColor, parseEditableBlocksText, serializeBlocksText } from './textParserUtils';
+import { getCharacterColor, parseOriginalBlocksText, serializeBlocksOriginalText, serializeBlocksText } from './textParserUtils';
 import { ExtractedFrame, VideoFile, ROI } from '../../types';
 import { SharedDialogueItem } from './components/blocks/SharedDialogueItem';
 
@@ -110,21 +110,28 @@ const NestedChoiceGroup: React.FC<NestedChoiceGroupProps> = ({
   const selectedOpt = selectedShowIndex !== null ? opts.find(o => o.showIndex === selectedShowIndex) : null;
   const [isRawEditing, setIsRawEditing] = React.useState(false);
   const [rawEditingText, setRawEditingText] = React.useState('');
+  const [rawEditingConvertedText, setRawEditingConvertedText] = React.useState('');
 
   React.useEffect(() => {
     setIsRawEditing(false);
     setRawEditingText('');
+    setRawEditingConvertedText('');
   }, [index, selectedShowIndex, block.nestedOptions]);
 
   const startRawEditing = () => {
     if (!selectedOpt) return;
-    setRawEditingText(serializeBlocksText(selectedOpt.blocks));
+    const original = serializeBlocksOriginalText(selectedOpt.blocks);
+    setRawEditingText(original.error ? '' : original.text);
+    setRawEditingConvertedText(serializeBlocksText(selectedOpt.blocks));
     setIsRawEditing(true);
+    if (original.error) {
+      showAlert(original.error, '转换前内容生成失败');
+    }
   };
 
   const saveRawEditing = () => {
     if (!selectedOpt) return;
-    const parsed = parseEditableBlocksText(rawEditingText);
+    const parsed = parseOriginalBlocksText(rawEditingText);
     if (parsed.error) {
       showAlert(parsed.error, '原文解析失败');
       return;
@@ -134,7 +141,19 @@ const NestedChoiceGroup: React.FC<NestedChoiceGroupProps> = ({
     );
     setIsRawEditing(false);
     setRawEditingText('');
+    setRawEditingConvertedText('');
   };
+
+  const rawEditingPreview = React.useMemo(() => {
+    if (!rawEditingText.trim()) {
+      return { text: rawEditingConvertedText, error: '' };
+    }
+    const parsed = parseOriginalBlocksText(rawEditingText);
+    if (parsed.error) {
+      return { text: rawEditingConvertedText, error: parsed.error };
+    }
+    return { text: serializeBlocksText(parsed.blocks), error: '' };
+  }, [rawEditingConvertedText, rawEditingText]);
 
   const renderContentBlock = (b: ParsedBlock, bi: number, showIndex: number) => {
     const fakeKey = `nested-${index}-${showIndex}-${bi}`;
@@ -511,6 +530,7 @@ const NestedChoiceGroup: React.FC<NestedChoiceGroupProps> = ({
                   onClick={() => {
                     setIsRawEditing(false);
                     setRawEditingText('');
+                    setRawEditingConvertedText('');
                   }}
                   className="px-2.5 py-1 text-xs text-white bg-gray-500 hover:bg-gray-600 rounded border border-gray-600 transition-colors"
                 >取消</button>
@@ -523,14 +543,28 @@ const NestedChoiceGroup: React.FC<NestedChoiceGroupProps> = ({
             )}
           </div>
           {isRawEditing ? (
-            <div className="space-y-1.5 mb-2">
-              <textarea
-                value={rawEditingText}
-                onChange={(e) => setRawEditingText(e.target.value)}
-                className="w-full min-h-[140px] px-3 py-2 border border-amber-300 rounded-lg text-xs font-mono resize-vertical bg-white text-gray-900"
-                placeholder="直接编辑当前嵌套分歧选项对应的模板原文，例如：{{对话|角色|内容}}"
-              />
-              <div className="text-[11px] text-gray-500">{'支持直接粘贴 {{旁白}}、{{对话}}、{{分歧}}、{{嵌套分歧}} 模板。'}</div>
+            <div className="grid gap-2 mb-2 md:grid-cols-2">
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-medium text-amber-700">转换前原文</div>
+                <textarea
+                  value={rawEditingText}
+                  onChange={(e) => setRawEditingText(e.target.value)}
+                  className="w-full min-h-[140px] px-3 py-2 border border-amber-300 rounded-lg text-xs font-mono resize-vertical bg-white text-gray-900"
+                  placeholder="直接编辑当前嵌套分歧选项对应的转换前原文"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-medium text-gray-600">转换后模板</div>
+                <textarea
+                  value={rawEditingPreview.text}
+                  readOnly
+                  className="w-full min-h-[140px] px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono resize-vertical bg-gray-50 text-gray-600"
+                  placeholder="这里会显示对应的转换后模板"
+                />
+              </div>
+              <div className={`text-[11px] md:col-span-2 ${rawEditingPreview.error ? 'text-amber-600' : 'text-gray-500'}`}>
+                {rawEditingPreview.error || '左侧编辑转换前原文，右侧用于对照转换后的模板内容。'}
+              </div>
             </div>
           ) : (
             <>

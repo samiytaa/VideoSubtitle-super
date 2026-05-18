@@ -34,6 +34,8 @@ interface TextEditorProofreaderProps {
   sharedVideoRef?: React.MutableRefObject<HTMLVideoElement | null>;
   roi?: ROI | null;
   onCaptureFrame?: (frame: ExtractedFrame) => void;
+  selectedReferenceFrameId?: string | null;
+  onSelectReferenceFrame?: (frame: ExtractedFrame) => void;
 }
 
 
@@ -45,7 +47,9 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
   videoSrc,
   sharedVideoRef,
   roi,
-  onCaptureFrame
+  onCaptureFrame,
+  selectedReferenceFrameId,
+  onSelectReferenceFrame
 }) => {
   const { addToast, showConfirm, showAlert } = useNotifier();
   const [inputText, setInputText, inputStorage] = useLocalStorageState<string>(STORAGE_KEYS.inputText, '', {
@@ -969,6 +973,8 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
         sharedVideoRef={sharedVideoRef}
         roi={roi}
         onCaptureFrame={onCaptureFrame}
+        selectedReferenceFrameId={selectedReferenceFrameId}
+        onSelectReferenceFrame={onSelectReferenceFrame}
       />
     );
   }
@@ -1022,6 +1028,8 @@ const TextEditorProofreader: React.FC<TextEditorProofreaderProps> = ({
         sharedVideoRef={sharedVideoRef}
         roi={roi}
         onCaptureFrame={onCaptureFrame}
+        selectedReferenceFrameId={selectedReferenceFrameId}
+        onSelectReferenceFrame={onSelectReferenceFrame}
       />
     );
   }

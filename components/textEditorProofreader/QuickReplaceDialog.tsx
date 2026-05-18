@@ -23,6 +23,8 @@ export interface QuickReplaceDialogProps {
   sharedVideoRef?: React.MutableRefObject<HTMLVideoElement | null>;
   roi?: ROI | null;
   onCaptureFrame?: (frame: ExtractedFrame) => void;
+  selectedReferenceFrameId?: string | null;
+  onSelectReferenceFrame?: (frame: ExtractedFrame) => void;
 }
 
 const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
@@ -41,7 +43,9 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
   videoSrc,
   sharedVideoRef,
   roi,
-  onCaptureFrame
+  onCaptureFrame,
+  selectedReferenceFrameId,
+  onSelectReferenceFrame
 }) => {
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState('');
@@ -195,6 +199,8 @@ const QuickReplaceDialog: React.FC<QuickReplaceDialogProps> = ({
           sharedVideoRef={sharedVideoRef}
           roi={roi}
           onCaptureFrame={onCaptureFrame}
+          selectedReferenceFrameId={selectedReferenceFrameId}
+          onSelectReferenceFrame={onSelectReferenceFrame}
         />
       )}
 

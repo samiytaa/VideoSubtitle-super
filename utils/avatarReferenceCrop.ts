@@ -15,6 +15,21 @@ export interface AvatarReferenceImages {
   right: string;
 }
 
+export interface LoadedAvatarReferenceImage {
+  element: HTMLImageElement;
+  width: number;
+  height: number;
+}
+
+export interface AvatarReferenceCropOptions {
+  leftWidthRatio?: number;
+  rightWidthRatio?: number;
+  maxWidthToHeightRatio?: number;
+}
+
+const DEFAULT_WIDTH_RATIO = 0.23;
+const DEFAULT_MAX_WIDTH_TO_HEIGHT_RATIO = 0.9;
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -28,20 +43,28 @@ function sanitizeRect(rect: PixelCropRect, imageWidth: number, imageHeight: numb
   return { x, y, width, height };
 }
 
-export function getAvatarReferenceCropRects(imageWidth: number, imageHeight: number): AvatarReferenceCrops {
+export function getAvatarReferenceCropRects(
+  imageWidth: number,
+  imageHeight: number,
+  options: AvatarReferenceCropOptions = {}
+): AvatarReferenceCrops {
   const width = Math.max(1, Math.round(imageWidth));
   const height = Math.max(1, Math.round(imageHeight));
-  const topPadding = Math.round(height * 0.06);
-  const cropHeight = Math.min(height - topPadding, Math.max(1, Math.round(height * 0.7)));
-  const cropWidth = Math.min(Math.max(1, Math.round(width * 0.34)), Math.max(1, Math.round(cropHeight * 0.9)));
-  const sidePadding = Math.round(width * 0.02);
+  const maxWidthToHeightRatio = clamp(options.maxWidthToHeightRatio ?? DEFAULT_MAX_WIDTH_TO_HEIGHT_RATIO, 0.2, 2);
+  const leftWidthRatio = clamp(options.leftWidthRatio ?? DEFAULT_WIDTH_RATIO, 0.05, 1);
+  const rightWidthRatio = clamp(options.rightWidthRatio ?? DEFAULT_WIDTH_RATIO, 0.05, 1);
+
+  const fullHeight = height;
+  const maxCropWidth = Math.min(width, Math.max(1, Math.round(fullHeight * maxWidthToHeightRatio)));
+  const leftCropWidth = Math.min(maxCropWidth, Math.max(1, Math.round(width * leftWidthRatio)));
+  const rightCropWidth = Math.min(maxCropWidth, Math.max(1, Math.round(width * rightWidthRatio)));
 
   const left = sanitizeRect(
     {
-      x: sidePadding,
-      y: topPadding,
-      width: cropWidth,
-      height: cropHeight,
+      x: 0,
+      y: 0,
+      width: leftCropWidth,
+      height: fullHeight,
     },
     width,
     height
@@ -49,10 +72,10 @@ export function getAvatarReferenceCropRects(imageWidth: number, imageHeight: num
 
   const right = sanitizeRect(
     {
-      x: width - sidePadding - cropWidth,
-      y: topPadding,
-      width: cropWidth,
-      height: cropHeight,
+      x: width - rightCropWidth,
+      y: 0,
+      width: rightCropWidth,
+      height: fullHeight,
     },
     width,
     height
@@ -61,10 +84,14 @@ export function getAvatarReferenceCropRects(imageWidth: number, imageHeight: num
   return { left, right };
 }
 
-function loadImage(src: string): Promise<HTMLImageElement> {
+export function loadAvatarReferenceImage(src: string): Promise<LoadedAvatarReferenceImage> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => resolve(img);
+    img.onload = () => resolve({
+      element: img,
+      width: img.naturalWidth || img.width,
+      height: img.naturalHeight || img.height,
+    });
     img.onerror = () => reject(new Error('无法加载参考图片'));
     img.src = src;
   });
@@ -94,12 +121,22 @@ function cropImageToDataUrl(img: HTMLImageElement, rect: PixelCropRect): string 
   return canvas.toDataURL('image/png');
 }
 
-export async function generateAvatarReferenceImages(imageUrl: string): Promise<AvatarReferenceImages> {
-  const img = await loadImage(imageUrl);
-  const rects = getAvatarReferenceCropRects(img.naturalWidth || img.width, img.naturalHeight || img.height);
+export function generateAvatarReferenceImagesFromLoadedImage(
+  loadedImage: LoadedAvatarReferenceImage,
+  options: AvatarReferenceCropOptions = {}
+): AvatarReferenceImages {
+  const rects = getAvatarReferenceCropRects(loadedImage.width, loadedImage.height, options);
 
   return {
-    left: cropImageToDataUrl(img, rects.left),
-    right: cropImageToDataUrl(img, rects.right),
+    left: cropImageToDataUrl(loadedImage.element, rects.left),
+    right: cropImageToDataUrl(loadedImage.element, rects.right),
   };
+}
+
+export async function generateAvatarReferenceImages(
+  imageUrl: string,
+  options: AvatarReferenceCropOptions = {}
+): Promise<AvatarReferenceImages> {
+  const loadedImage = await loadAvatarReferenceImage(imageUrl);
+  return generateAvatarReferenceImagesFromLoadedImage(loadedImage, options);
 }

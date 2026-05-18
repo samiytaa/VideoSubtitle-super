@@ -1,7 +1,7 @@
-import { FileCheck, Image as ImageIcon, LayoutGrid, MessageCircle, ScanText } from 'lucide-react';
+import { FileCheck, Image as ImageIcon, LayoutGrid, MessageCircle, ScanText, UserRound } from 'lucide-react';
 import React from 'react';
 
-export type AppTab = 'extract' | 'gallery' | 'proofread2' | 'aichat' | 'baimiao';
+export type AppTab = 'extract' | 'gallery' | 'proofread2' | 'aichat' | 'baimiao' | 'avatars';
 
 type AppHeaderProps = {
   activeTab: AppTab;
@@ -16,6 +16,7 @@ const TAB_CONFIG: Array<{ tab: AppTab; label: string; icon: React.ReactElement }
   { tab: 'aichat',     label: 'AI处理',   icon: <MessageCircle className="w-4 h-4" /> },
   { tab: 'proofread2', label: '文本校对', icon: <FileCheck className="w-4 h-4" /> },
   { tab: 'baimiao',    label: '白描ocr',  icon: <ScanText className="w-4 h-4" /> },
+  { tab: 'avatars',    label: '选择头像', icon: <UserRound className="w-4 h-4" /> },
 ];
 
 function getTabClass(tab: AppTab, activeTab: AppTab, isBusy: boolean): string {

@@ -6,16 +6,16 @@ describe('getAvatarReferenceCropRects', () => {
     const rects = getAvatarReferenceCropRects(1920, 1080);
 
     expect(rects.left).toEqual({
-      x: 38,
-      y: 65,
-      width: 653,
-      height: 756,
+      x: 0,
+      y: 0,
+      width: 442,
+      height: 1080,
     });
     expect(rects.right).toEqual({
-      x: 1229,
-      y: 65,
-      width: 653,
-      height: 756,
+      x: 1478,
+      y: 0,
+      width: 442,
+      height: 1080,
     });
   });
 
@@ -26,5 +26,18 @@ describe('getAvatarReferenceCropRects', () => {
     expect(rects.left.y).toBeGreaterThanOrEqual(0);
     expect(rects.right.x + rects.right.width).toBeLessThanOrEqual(120);
     expect(rects.right.y + rects.right.height).toBeLessThanOrEqual(80);
+  });
+
+  it('allows different crop widths for left and right sides', () => {
+    const rects = getAvatarReferenceCropRects(1920, 1080, {
+      leftWidthRatio: 0.3,
+      rightWidthRatio: 0.45,
+    });
+
+    expect(rects.left.width).toBeLessThan(rects.right.width);
+    expect(rects.left.height).toBe(1080);
+    expect(rects.right.height).toBe(1080);
+    expect(rects.left.x).toBe(0);
+    expect(rects.right.x + rects.right.width).toBeLessThanOrEqual(1920);
   });
 });

@@ -1,5 +1,6 @@
 import { ParsedBlock, Chapter } from './types';
 import { normalizeAvatarName } from '../../utils/avatarMap';
+import { convertTextMainline, reverseConvertText } from '../../utils/textConversionUtils';
 
 export const parseSingleBlock = (line: string): ParsedBlock | null => {
   const m = line.match(/^\{\{([^|]+)\|(.+)\}\}$/s);
@@ -190,6 +191,34 @@ export const parseEditableBlocksText = (text: string): { blocks: ParsedBlock[]; 
   if (tokenCount > 0 && blocks.length === 0) {
     return { blocks: [], error: '原文格式无法解析，请检查模板是否完整闭合。' };
   }
+  return { blocks };
+};
+
+export const serializeBlocksOriginalText = (blocks: ParsedBlock[]): { text: string; error?: string } => {
+  const serialized = serializeBlocksText(blocks);
+  if (!serialized.trim()) return { text: '' };
+
+  const reversed = reverseConvertText(serialized, 'mainline');
+  if (!reversed.success) {
+    return { text: '', error: reversed.error || '转换前内容生成失败' };
+  }
+
+  return { text: reversed.output };
+};
+
+export const parseOriginalBlocksText = (text: string): { blocks: ParsedBlock[]; error?: string } => {
+  const trimmed = text.trim();
+  if (!trimmed) return { blocks: [] };
+
+  const converted = convertTextMainline(trimmed);
+  if (!converted.success) {
+    return { blocks: [], error: converted.error || '转换失败' };
+  }
+
+  const blocks = parseSectionBlocks(converted.output).filter(
+    block => block.type !== 'header' && block.type !== 'footer' && block.type !== 'nested-choice'
+  );
+
   return { blocks };
 };
 

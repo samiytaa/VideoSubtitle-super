@@ -24,6 +24,7 @@ const TAB_TO_PATH: Record<Tab, string> = {
   proofread2: '/proofread',
   baimiao: '/baimiao-ocr',
   aichat: '/ai-chat',
+  avatars: '/avatars',
 };
 
 const PATH_TO_TAB: Record<string, Tab> = {
@@ -32,6 +33,7 @@ const PATH_TO_TAB: Record<string, Tab> = {
   '/proofread': 'proofread2',
   '/baimiao-ocr': 'baimiao',
   '/ai-chat': 'aichat',
+  '/avatars': 'avatars',
   '/ocr': 'aichat',
 };
 

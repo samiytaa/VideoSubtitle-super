@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { SIDE_PANEL_COLLAPSED_WIDTH } from './panelConstants';
+import CollapsibleSidebar from './common/CollapsibleSidebar';
 
 interface ResizablePanelProps {
   children: React.ReactNode;
@@ -105,74 +105,46 @@ const ResizablePanel: React.FC<ResizablePanelProps> = ({
   };
 
   return (
-    <div
-      className="border-r border-gray-200 bg-gray-50 shrink-0 flex flex-col relative transition-all duration-300 h-full"
-      style={{
-        width: isCollapsed ? collapsedWidth : width,
-        minWidth: isCollapsed ? collapsedWidth : minWidth,
-        maxWidth: isCollapsed ? collapsedWidth : maxWidth,
-      }}
+    <CollapsibleSidebar
+      side="left"
+      title={label}
+      collapsed={isCollapsed}
+      expandedWidth={width}
+      collapsedWidth={collapsedWidth}
+      onToggle={toggleCollapse}
+      className="bg-gray-50"
+      bodyClassName="flex-1 overflow-hidden relative"
+      expandTitle="展开面板"
+      collapseTitle="折叠面板"
+      resizeHandle={(
+        <div
+          onMouseDown={handleMouseDown}
+          className={`absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400 transition-colors ${
+            isResizing ? 'bg-indigo-400' : 'bg-transparent'
+          }`}
+          title="拖动调整宽度"
+        />
+      )}
     >
-      {isCollapsed ? (
-        // 折叠状态：图标按钮 + 竖排文字（复用 AvatarPicker 左侧分类栏样式）
-        <div className="box-border h-full w-full flex flex-col items-center justify-start pt-5 px-1.5">
-          <button
-            onClick={toggleCollapse}
-            className="p-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-            title="展开面板"
-          >
-            <PanelLeftOpen className="w-3.5 h-3.5" />
-          </button>
-          <div className="[writing-mode:vertical-rl] text-[11px] leading-none text-gray-500 mt-2.5 select-none">
-            {label}
+      <div
+        ref={panelRef}
+        className="h-full p-2"
+        style={{
+          minWidth: minWidth,
+          maxWidth: maxWidth,
+        }}
+      >
+        {children}
+      </div>
+
+      {isResizing && (
+        <div className="absolute inset-0 bg-indigo-50/10 pointer-events-none flex items-center justify-center">
+          <div className="bg-indigo-600 text-white px-3 py-1 rounded text-xs shadow">
+            {Math.round(width)}px
           </div>
         </div>
-      ) : (
-        // 展开状态：标题栏 + 折叠按钮 + 内容（复用 AvatarPicker 左侧分类栏样式）
-        <>
-          {/* 标题栏 */}
-          <div className="px-4 py-2.5 border-b border-gray-200 flex items-center gap-2 shrink-0">
-            <span className="text-xs font-medium text-gray-700 shrink-0">{label}</span>
-            <div className="ml-auto" />
-            <button
-              onClick={toggleCollapse}
-              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors shrink-0"
-              title="折叠面板"
-            >
-              <PanelLeftClose className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* 内容区 */}
-          <div
-            ref={panelRef}
-            className="flex-1 overflow-hidden relative"
-          >
-            <div className="h-full p-2">
-              {children}
-            </div>
-
-            {/* 拖动手柄 */}
-            <div
-              onMouseDown={handleMouseDown}
-              className={`absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400 transition-colors ${
-                isResizing ? 'bg-indigo-400' : 'bg-transparent'
-              }`}
-              title="拖动调整宽度"
-            />
-
-            {/* 拖动时的宽度提示 */}
-            {isResizing && (
-              <div className="absolute inset-0 bg-indigo-50/10 pointer-events-none flex items-center justify-center">
-                <div className="bg-indigo-600 text-white px-3 py-1 rounded text-xs shadow">
-                  {Math.round(width)}px
-                </div>
-              </div>
-            )}
-          </div>
-        </>
       )}
-    </div>
+    </CollapsibleSidebar>
   );
 };
 

@@ -1,7 +1,8 @@
 import React, { useRef, useCallback, useEffect, useState, useImperativeHandle, useMemo } from 'react';
-import { PanelRightClose, PanelRightOpen, BookOpen, ChevronDown, Copy } from 'lucide-react';
+import { BookOpen, ChevronDown, Copy } from 'lucide-react';
 import { SIDE_PANEL_COLLAPSED_WIDTH } from '../panelConstants';
 import SearchBar from './SearchBar';
+import CollapsibleSidebar from '../common/CollapsibleSidebar';
 
 interface InputPanelProps {
   isCollapsed: boolean;
@@ -645,62 +646,43 @@ const InputPanel: React.FC<InputPanelProps> = ({
   }, [activeTab, onCopyConverted, onCopyOriginal]);
 
   return (
-    <div
-      className="border-l border-gray-200 bg-white shrink-0 flex flex-col relative transition-all duration-300 h-full"
-      style={{ width: isCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : panelWidth }}
-    >
-      {/* 左侧拖拽条（展开时显示） */}
-      {!isCollapsed && (
+    <CollapsibleSidebar
+      side="right"
+      title="输入文本"
+      collapsed={isCollapsed}
+      expandedWidth={panelWidth}
+      collapsedWidth={SIDE_PANEL_COLLAPSED_WIDTH}
+      onExpand={onExpand}
+      onCollapse={onCollapse}
+      className="bg-white"
+      bodyClassName="flex-1 flex flex-col overflow-hidden"
+      collapseTitle="折叠输入文本"
+      expandTitle="展开输入文本"
+      headerStart={<span className="text-[11px] text-gray-400">双栏对照</span>}
+      headerEnd={(
+        <button
+          type="button"
+          onClick={() => setHelpExpanded((value) => !value)}
+          className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors ${
+            helpExpanded
+              ? 'bg-indigo-50 text-indigo-700'
+              : 'text-gray-400 hover:bg-gray-100 hover:text-indigo-600'
+          }`}
+          title={helpExpanded ? '收起格式说明' : '展开格式说明'}
+          aria-expanded={helpExpanded}
+          aria-label="格式说明"
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${helpExpanded ? 'rotate-180' : ''}`} />
+        </button>
+      )}
+      resizeHandle={(
         <div
           className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400 transition-colors z-10"
           onMouseDown={handleResizeMouseDown}
         />
       )}
-
-      {isCollapsed ? (
-        /* 折叠状态 */
-        <div className="box-border h-full w-full flex flex-col items-center justify-start pt-5 px-1.5">
-          <button
-            onClick={onExpand}
-            className="p-1.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
-            title="展开输入文本"
-          >
-            <PanelRightOpen className="w-3.5 h-3.5" />
-          </button>
-          <div className="[writing-mode:vertical-rl] text-[11px] leading-none text-gray-500 mt-2.5 select-none">
-            输入文本
-          </div>
-        </div>
-      ) : (
-        /* 展开状态 */
-        <>
-          {/* 标题栏 */}
-          <div className="px-3 py-2.5 border-b border-gray-200 flex items-center gap-2 shrink-0">
-            <button
-              onClick={onCollapse}
-              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors shrink-0"
-              title="折叠面板"
-            >
-              <PanelRightClose className="w-4 h-4" />
-            </button>
-            <span className="text-xs font-medium text-gray-700 shrink-0">输入文本</span>
-            <span className="text-[11px] text-gray-400">双栏对照</span>
-            <button
-              type="button"
-              onClick={() => setHelpExpanded((value) => !value)}
-              className={`ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors ${
-                helpExpanded
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-gray-400 hover:bg-gray-100 hover:text-indigo-600'
-              }`}
-              title={helpExpanded ? '收起格式说明' : '展开格式说明'}
-              aria-expanded={helpExpanded}
-              aria-label="格式说明"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${helpExpanded ? 'rotate-180' : ''}`} />
-            </button>
-          </div>
+    >
 
           {helpExpanded && (
             <div className="mx-3 mt-2 shrink-0 overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50/45">
@@ -828,9 +810,7 @@ const InputPanel: React.FC<InputPanelProps> = ({
               />
             </div>
           </div>
-        </>
-      )}
-    </div>
+    </CollapsibleSidebar>
   );
 };
 
